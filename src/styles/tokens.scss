@@ -1,0 +1,41 @@
+:root {
+  --color-bg: #f6f7f9;
+  --color-bg-gradient: radial-gradient(ellipse at 50% 0%, #ffffff 0%, #f6f7f9 70%);
+  --color-surface-glass: rgba(255, 255, 255, 0.72);
+  --color-border-subtle: rgba(226, 232, 240, 0.8);
+  --color-border-glass: rgba(255, 255, 255, 0.6);
+
+  --color-state-sitting: #ef4444;
+  --color-state-standing: #22c55e;
+  --color-state-away: #64748b;
+  --color-state-off-duty: #94a3b8;
+
+  --color-glow-sitting: rgba(239, 68, 68, 0.15);
+  --color-glow-standing: rgba(34, 197, 94, 0.12);
+
+  --shadow-card: 0 1px 3px rgba(15, 23, 42, 0.04), 0 4px 12px rgba(15, 23, 42, 0.03);
+  --shadow-card-hover: 0 2px 8px rgba(15, 23, 42, 0.06), 0 8px 24px rgba(15, 23, 42, 0.05);
+
+  --radius-sm: 10px;
+  --radius-md: 14px;
+  --radius-lg: 18px;
+
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+  --duration-fast: 200ms;
+  --duration-breath: 3.5s;
+
+  --font-display: 'DM Sans', 'Segoe UI', sans-serif;
+  --font-body: 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+}
+
+@mixin glass-surface {
+  background: var(--color-surface-glass);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid var(--color-border-glass);
+}
+
+@mixin display-num {
+  font-family: var(--font-display);
+  font-variant-numeric: tabular-nums;
+}

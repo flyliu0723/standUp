@@ -1,0 +1,84 @@
+{
+  "name": "standup",
+  "version": "1.0.0",
+  "description": "久坐提醒 — 每40分钟强制起立",
+  "main": "./out/main/index.js",
+  "author": "standUp",
+  "scripts": {
+    "dev": "node node_modules/electron-vite/bin/electron-vite.js dev",
+    "build": "node node_modules/electron-vite/bin/electron-vite.js build",
+    "preview": "node node_modules/electron-vite/bin/electron-vite.js preview",
+    "dist": "npm run build && node node_modules/electron-builder/cli.js --dir",
+    "dist:installer": "npm run build && node node_modules/electron-builder/cli.js --win nsis",
+    "postinstall": "node scripts/create-icon.js && node scripts/install-electron.js"
+  },
+  "dependencies": {
+    "chart.js": "^4.5.1",
+    "electron-store": "^8.2.0",
+    "koffi": "^2.10.1",
+    "naive-ui": "^2.40.1",
+    "pinia": "^2.3.0",
+    "vue": "^3.5.13",
+    "vue-chartjs": "^5.3.3",
+    "vue-router": "^4.5.0"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-vue": "^5.2.1",
+    "electron": "^33.2.1",
+    "electron-builder": "^25.1.8",
+    "electron-vite": "^2.3.0",
+    "pngjs": "^7.0.0",
+    "sass": "^1.83.0",
+    "to-ico": "^1.1.5",
+    "typescript": "^5.7.2",
+    "vite": "^5.4.11",
+    "vue-tsc": "^2.2.0"
+  },
+  "build": {
+    "appId": "com.standup.app",
+    "productName": "standUp",
+    "directories": {
+      "buildResources": "resources",
+      "output": "release"
+    },
+    "files": [
+      "out/**/*",
+      "package.json"
+    ],
+    "asar": true,
+    "asarUnpack": [
+      "node_modules/koffi/**/*"
+    ],
+    "extraResources": [
+      {
+        "from": "resources",
+        "to": "resources",
+        "filter": [
+          "**/*"
+        ]
+      }
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "resources/icon.ico"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "deleteAppDataOnUninstall": false
+    }
+  }
+}
