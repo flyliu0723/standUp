@@ -5,7 +5,7 @@
   "main": "./out/main/index.js",
   "author": "standUp",
   "scripts": {
-    "dev": "node node_modules/electron-vite/bin/electron-vite.js dev",
+    "dev": "node scripts/create-icon.js && node node_modules/electron-vite/bin/electron-vite.js dev",
     "build": "node node_modules/electron-vite/bin/electron-vite.js build",
     "preview": "node node_modules/electron-vite/bin/electron-vite.js preview",
     "dist": "npm run build && node node_modules/electron-builder/cli.js --dir",
@@ -15,6 +15,7 @@
   "dependencies": {
     "chart.js": "^4.5.1",
     "electron-store": "^8.2.0",
+    "html2canvas": "^1.4.1",
     "koffi": "^2.10.1",
     "naive-ui": "^2.40.1",
     "pinia": "^2.3.0",

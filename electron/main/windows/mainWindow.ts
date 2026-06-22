@@ -1,6 +1,7 @@
 import { BrowserWindow, app, shell } from 'electron'
 import { join } from 'path'
 import { sessionService } from '../services/sessionService'
+import { loadWindowIcon } from '../utils/trayIcon'
 import type { SessionStatus } from '../types/session'
 
 let mainWindow: BrowserWindow | null = null
@@ -15,6 +16,7 @@ function getRendererUrl(hash: string): string {
 export type MainTab = 'dashboard' | 'report' | 'settings' | 'guide'
 
 function createMainWindow(show = false, tab: MainTab = 'dashboard'): BrowserWindow {
+  const windowIcon = loadWindowIcon()
   mainWindow = new BrowserWindow({
     width: 820,
     height: 680,
@@ -23,6 +25,7 @@ function createMainWindow(show = false, tab: MainTab = 'dashboard'): BrowserWind
     show,
     autoHideMenuBar: true,
     title: 'standUp — 久坐提醒',
+    icon: windowIcon,
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
       sandbox: false,
@@ -99,7 +102,7 @@ export function updateTaskbarProgress(status: SessionStatus): void {
     }
   }
   if (status.state === 'standing' && status.timerMode === 'stand') {
-    const total = status.standIntervalMinutes * 60 * 1000
+    const total = status.standTimerTotalMs || status.standIntervalMinutes * 60 * 1000
     const remaining = status.timerRemainingMs
     if (total > 0 && remaining > 0) {
       main.setProgressBar(remaining / total, { mode: 'paused' })

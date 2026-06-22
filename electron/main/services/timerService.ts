@@ -55,6 +55,12 @@ export class TimerService {
     this.clear()
     const intervalMs = this.getIntervalMs()
     const remaining = fullReset ? intervalMs : this.pausedRemainingMs || intervalMs
+    this.startWithDuration(remaining)
+  }
+
+  startWithDuration(durationMs: number): void {
+    this.clear()
+    const remaining = Math.max(durationMs, 1)
     this.deadlineAt = Date.now() + remaining
     this.pausedRemainingMs = remaining
     this.running = true

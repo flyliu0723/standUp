@@ -1,10 +1,19 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import type {
   AppSettings,
+  ActivitySnapshot,
+  AiDailyAnalysis,
+  WellnessHudStatus,
+  AppUsageDailySummary,
+  AppCategoryConfigItem,
+  DailyHealthSummary,
   DailyStats,
   GamificationState,
   ReportSummary,
-  SessionStatus
+  SessionStatus,
+  StatusBarPlacementOption,
+  StatusBarLayoutInfo,
+  StandReasonId
 } from '../main/types/session'
 import type { ReminderPhase } from '../main/windows/reminderWindow'
 
@@ -28,6 +37,7 @@ export interface StandUpApi {
   startWork: () => Promise<void>
   sitDown: () => Promise<void>
   standUp: () => Promise<void>
+  standUpWithReason: (reasonId: StandReasonId) => Promise<void>
   endWork: () => Promise<void>
   toggleSitStand: () => Promise<void>
   pauseReminder: (minutes: number) => Promise<void>
@@ -35,6 +45,26 @@ export interface StandUpApi {
   resumePause: () => Promise<void>
   getReportSummary: (date: string) => Promise<ReportSummary>
   getGamification: () => Promise<GamificationState>
+  openMainWindow: () => Promise<void>
+  deferForIde: () => Promise<boolean>
+  forceReminder: () => Promise<boolean>
+  onIdeDeferContext: (
+    callback: (ctx: { ideLabel: string; snoozeMinutes: number }) => void
+  ) => () => void
+  getActivitySnapshot: () => Promise<ActivitySnapshot>
+  getWellnessHud: () => Promise<WellnessHudStatus>
+  onWellnessHudChange: (callback: (hud: WellnessHudStatus) => void) => () => void
+  getStatusBarPlacements: () => Promise<StatusBarPlacementOption[]>
+  onStatusBarLayout: (callback: (layout: StatusBarLayoutInfo) => void) => () => void
+  dismissMicroAction: () => Promise<boolean>
+  onMicroActionContext: (
+    callback: (ctx: { id: string; emoji: string; title: string; body: string }) => void
+  ) => () => void
+  getAppUsageSummary: (date: string) => Promise<AppUsageDailySummary>
+  getAppCategoryList: () => Promise<AppCategoryConfigItem[]>
+  getDailyHealthSummary: () => Promise<DailyHealthSummary>
+  getAiAnalysis: (date: string) => Promise<AiDailyAnalysis | null>
+  generateAiAnalysis: (date: string, force?: boolean) => Promise<AiDailyAnalysis>
 }
 
 const api: StandUpApi = {
@@ -71,13 +101,52 @@ const api: StandUpApi = {
   startWork: () => ipcRenderer.invoke('session:startWork'),
   sitDown: () => ipcRenderer.invoke('session:sitDown'),
   standUp: () => ipcRenderer.invoke('session:standUp'),
+  standUpWithReason: (reasonId) => ipcRenderer.invoke('session:standUpWithReason', reasonId),
   endWork: () => ipcRenderer.invoke('session:endWork'),
   toggleSitStand: () => ipcRenderer.invoke('session:toggle'),
   pauseReminder: (minutes) => ipcRenderer.invoke('session:pause', minutes),
   pauseUntilEndOfDay: () => ipcRenderer.invoke('session:pauseUntilEndOfDay'),
   resumePause: () => ipcRenderer.invoke('session:resumePause'),
   getReportSummary: (date) => ipcRenderer.invoke('stats:summary', date),
-  getGamification: () => ipcRenderer.invoke('gamification:get')
+  getGamification: () => ipcRenderer.invoke('gamification:get'),
+  openMainWindow: () => ipcRenderer.invoke('app:openMain'),
+  deferForIde: () => ipcRenderer.invoke('reminder:deferIde'),
+  forceReminder: () => ipcRenderer.invoke('reminder:force'),
+  onIdeDeferContext: (callback) => {
+    const handler = (
+      _event: Electron.IpcRendererEvent,
+      ctx: { ideLabel: string; snoozeMinutes: number }
+    ) => callback(ctx)
+    ipcRenderer.on('ide-defer:context', handler)
+    return () => ipcRenderer.removeListener('ide-defer:context', handler)
+  },
+  getActivitySnapshot: () => ipcRenderer.invoke('activity:snapshot'),
+  getWellnessHud: () => ipcRenderer.invoke('wellness:hud'),
+  onWellnessHudChange: (callback) => {
+    const handler = (_event: Electron.IpcRendererEvent, hud: WellnessHudStatus) => callback(hud)
+    ipcRenderer.on('wellness:hudChange', handler)
+    return () => ipcRenderer.removeListener('wellness:hudChange', handler)
+  },
+  getStatusBarPlacements: () => ipcRenderer.invoke('status-bar:placements'),
+  onStatusBarLayout: (callback) => {
+    const handler = (_event: Electron.IpcRendererEvent, layout: StatusBarLayoutInfo) => callback(layout)
+    ipcRenderer.on('status-bar:layout', handler)
+    return () => ipcRenderer.removeListener('status-bar:layout', handler)
+  },
+  dismissMicroAction: () => ipcRenderer.invoke('micro-action:dismiss'),
+  onMicroActionContext: (callback) => {
+    const handler = (
+      _event: Electron.IpcRendererEvent,
+      ctx: { id: string; emoji: string; title: string; body: string }
+    ) => callback(ctx)
+    ipcRenderer.on('micro-action:context', handler)
+    return () => ipcRenderer.removeListener('micro-action:context', handler)
+  },
+  getAppUsageSummary: (date) => ipcRenderer.invoke('app-usage:summary', date),
+  getAppCategoryList: () => ipcRenderer.invoke('app-categories:list'),
+  getDailyHealthSummary: () => ipcRenderer.invoke('health:dailySummary'),
+  getAiAnalysis: (date) => ipcRenderer.invoke('ai:getAnalysis', date),
+  generateAiAnalysis: (date, force) => ipcRenderer.invoke('ai:generate', date, force)
 }
 
 contextBridge.exposeInMainWorld('standUp', api)

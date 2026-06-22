@@ -6,18 +6,33 @@ import { settingsService } from './settingsService'
 import { statsService } from './statsService'
 import { sitTimer, standTimer } from './timerService'
 import { workScheduleService } from './workScheduleService'
-import { closeReminderWindow, getReminderWindow, sendReminderPhase } from '../windows/reminderWindow'
-import { closeReminderToast, showReminderToast, showStandCompleteToast } from './notificationService'
+import { closeReminderWindow, getReminderWindow } from '../windows/reminderWindow'
+import { closeReminderToastWindow, showIdeDeferWindow } from '../windows/reminderToastWindow'
+import { showStandCompleteToast } from './notificationService'
+import { shouldOfferIdeDefer, getIdeGuardContext } from './ideGuardService'
+import {
+  startReminderEscalation,
+  clearReminderEscalation,
+  dismissEscalationWindows,
+  hasEscalatedBeyondToast,
+  showReminderStandingPhase
+} from './reminderEscalation'
+import { applyAmbientSettingsChange } from './ambientDisplayService'
+import { updateStatusBarLayout } from '../windows/statusBarWindow'
 import { gamificationService } from './gamificationService'
+import { activityMonitorService } from './activityMonitorService'
+import { aiAnalysisService } from './aiAnalysisService'
 import {
   PersistedRuntime,
   SessionEndReason,
   SessionStatus,
   SessionType,
+  StandReasonId,
   TimerMode,
   WorkState,
   AppSettings
 } from '../types/session'
+import { getStandReasonConfig, STAND_REASON_LABELS } from '../constants/standReasons'
 
 interface RuntimeStoreSchema {
   runtime: PersistedRuntime
@@ -34,6 +49,9 @@ type StateListener = (status: SessionStatus) => void
 type ReminderListener = (sitMinutes: number) => void
 type FullscreenReminderListener = (sitMinutes: number) => void
 
+/** 当前段不足该时长时，忽略手动起立/坐下（防误触） */
+const MIN_TOGGLE_INTERVAL_MS = 60_000
+
 export class SessionService {
   private state: WorkState = 'offDuty'
   private currentSessionId: string | null = null
@@ -49,11 +67,19 @@ export class SessionService {
   private reminderWatchTimer: ReturnType<typeof setInterval> | null = null
   private toastGraceTimer: ReturnType<typeof setTimeout> | null = null
   private toastHandled = false
+  private ideDeferPending = false
   private pausedBeforeState: WorkState = 'sitting'
   private pausedUntil = 0
   private awayEnteredAt = 0
   private awayConfirmInProgress = false
   private activeSessionStartAt = 0
+  private inactivePauseActive = false
+  private reminderResponsePending = false
+  private currentStandReason: StandReasonId | null = null
+  private currentStandDurationMs = 0
+  private pauseReason: StandReasonId | null = null
+  private currentPauseId: string | null = null
+  private pausePlannedMs = 0
 
   init(): void {
     sitTimer.setOnExpire(() => this.handleSitTimerExpire())
@@ -73,6 +99,7 @@ export class SessionService {
     this.pausedBeforeState = runtime.pausedBeforeState ?? 'sitting'
     this.pausedUntil = runtime.pausedUntil ?? 0
     this.awayEnteredAt = runtime.awayEnteredAt ?? 0
+    this.pauseReason = runtime.pauseReason ?? null
 
     statsService.checkDateRollover()
     this.restoreTimers(runtime)
@@ -100,6 +127,15 @@ export class SessionService {
       this.emitState()
     }
 
+    if (partial.ambientDisplayMode !== undefined) {
+      applyAmbientSettingsChange(saved, this.getStatus())
+    }
+
+    if (partial.statusBarDisplayId !== undefined || partial.statusBarEdge !== undefined) {
+      applyAmbientSettingsChange(saved, this.getStatus())
+      updateStatusBarLayout()
+    }
+
     return saved
   }
 
@@ -124,10 +160,13 @@ export class SessionService {
     }
     this.toastHandled = true
     this.clearToastGraceTimer()
-    closeReminderToast()
+    clearReminderEscalation()
 
     if (action === 'stand') {
-      this.acknowledgeStand()
+      const ok = this.acknowledgeStand()
+      if (ok) {
+        showReminderStandingPhase(this.getReminderSitMinutes())
+      }
     } else {
       const ok = this.snoozeFromReminder()
       if (ok) {
@@ -135,6 +174,24 @@ export class SessionService {
       }
     }
     this.emitState()
+  }
+
+  deferForIde(): boolean {
+    if (!this.ideDeferPending) {
+      return false
+    }
+    this.ideDeferPending = false
+    closeReminderToastWindow()
+    return this.snoozeFromReminder()
+  }
+
+  forceReminderAfterIdeDefer(): void {
+    if (!this.ideDeferPending) {
+      return
+    }
+    this.ideDeferPending = false
+    closeReminderToastWindow()
+    this.beginReminderFlow()
   }
 
   onReminderShown(): void {
@@ -155,7 +212,7 @@ export class SessionService {
     if (this.state === 'offDuty') {
       this.startWork()
     } else if (this.state === 'sitting') {
-      this.standUp()
+      this.standUpWithReason('other')
     } else if (this.state === 'standing') {
       this.sitDown()
     }
@@ -171,7 +228,12 @@ export class SessionService {
       timerRemainingMs = sitTimer.getRemainingMs()
     } else if (timerMode === 'stand') {
       timerRemainingMs = standTimer.getRemainingMs()
+    } else if (this.state === 'paused' && this.pausedUntil > Date.now()) {
+      timerRemainingMs = this.pausedUntil - Date.now()
     }
+
+    const pauseTimerTotalMs =
+      this.state === 'paused' && this.pausePlannedMs > 0 ? this.pausePlannedMs : undefined
 
     return {
       state: this.state,
@@ -182,7 +244,19 @@ export class SessionService {
       sitIntervalMinutes: settings.sitIntervalMinutes,
       standIntervalMinutes: settings.standIntervalMinutes,
       isPaused: this.state === 'paused',
-      pausedUntil: this.state === 'paused' && this.pausedUntil > Date.now() ? this.pausedUntil : undefined
+      pausedUntil: this.state === 'paused' && this.pausedUntil > Date.now() ? this.pausedUntil : undefined,
+      isInactivePaused: this.inactivePauseActive,
+      standReasonLabel:
+        this.state === 'standing' && this.currentStandReason
+          ? STAND_REASON_LABELS[this.currentStandReason]
+          : undefined,
+      pauseReasonLabel:
+        this.state === 'paused' && this.pauseReason ? STAND_REASON_LABELS[this.pauseReason] : undefined,
+      standTimerTotalMs:
+        this.state === 'standing'
+          ? this.currentStandDurationMs || settings.standIntervalMinutes * 60_000
+          : undefined,
+      pauseTimerTotalMs
     }
   }
 
@@ -191,6 +265,8 @@ export class SessionService {
   }
 
   pauseReminder(minutes: number): void {
+    this.pausePlannedMs = minutes * 60_000
+    this.pauseReason = null
     this.enterPaused(Date.now() + minutes * 60_000)
   }
 
@@ -204,7 +280,19 @@ export class SessionService {
     if (this.state !== 'paused') {
       return
     }
+    this.finishPauseRecord()
+    const wasLongPause = this.pauseReason !== null
+    this.pauseReason = null
     this.pausedUntil = 0
+
+    if (wasLongPause && this.pausedBeforeState === 'sitting' && !this.currentSessionId) {
+      this.state = 'sitting'
+      this.startSitSession()
+      this.persist()
+      this.emitState()
+      return
+    }
+
     this.exitPaused()
     this.persist()
     this.emitState()
@@ -228,6 +316,9 @@ export class SessionService {
       this.dismissReminderIfOpen()
       return
     }
+    if (this.state === 'standing' && this.isStandSegmentTooShort()) {
+      return
+    }
     if (this.state === 'offDuty') {
       statsService.markWorkStart()
     }
@@ -236,6 +327,8 @@ export class SessionService {
       this.endCurrentSession('manual')
     }
 
+    this.currentStandReason = null
+    this.currentStandDurationMs = 0
     this.resetReminderFlags()
     this.state = 'sitting'
     this.currentSessionType = 'sitting'
@@ -252,10 +345,29 @@ export class SessionService {
   }
 
   standUp(): void {
+    this.standUpWithReason('other')
+  }
+
+  standUpWithReason(reasonId: StandReasonId): void {
     if (this.state !== 'sitting') {
       return
     }
-    this.beginStanding('manual')
+    if (this.isSitSegmentTooShort()) {
+      return
+    }
+
+    const config = getStandReasonConfig(reasonId)
+    if (this.reminderActive) {
+      this.resolveReminderResponseAsStand()
+      this.clearReminderFlow()
+    }
+
+    if (config.mode === 'paused') {
+      this.beginLongPause(reasonId, config.durationMinutes)
+      return
+    }
+
+    this.beginStanding('manual', reasonId, config.durationMinutes)
   }
 
   acknowledgeStand(fromAuto = false): boolean {
@@ -265,7 +377,10 @@ export class SessionService {
     this.reminderActive = false
     this.stopReminderWatch()
     this.clearToastGraceTimer()
-    closeReminderToast()
+    clearReminderEscalation()
+    if (this.reminderResponsePending) {
+      this.completeReminderResponse(fromAuto ? 'on_time' : this.getStandResponseType())
+    }
     this.autoStandPending = fromAuto
     this.standingOnReminder = true
     this.beginStanding(fromAuto ? 'auto_idle' : 'reminder')
@@ -275,10 +390,14 @@ export class SessionService {
   sitDownFromReminder(): boolean {
     statsService.checkDateRollover()
     if (this.state === 'standing') {
+      if (this.isStandSegmentTooShort()) {
+        return false
+      }
       this.autoStandPending = false
       this.standingOnReminder = false
       this.endCurrentSession('manual')
       this.startSitSession()
+      this.dismissReminderIfOpen()
     }
     return true
   }
@@ -287,10 +406,12 @@ export class SessionService {
     if (this.state !== 'sitting') {
       return false
     }
+    this.completeReminderResponse('delayed')
+    this.ideDeferPending = false
     this.reminderActive = false
     this.stopReminderWatch()
     this.clearToastGraceTimer()
-    closeReminderToast()
+    clearReminderEscalation()
     this.resetReminderFlags()
 
     const mins = settingsService.getSettings().snoozeMinutes
@@ -315,6 +436,12 @@ export class SessionService {
 
   endWork(): void {
     this.clearReminderFlow()
+    this.exitInactivePause()
+    if (this.state === 'paused') {
+      this.finishPauseRecord()
+      this.pauseReason = null
+      this.pausedUntil = 0
+    }
     if (this.state === 'sitting' || this.state === 'standing' || this.state === 'away') {
       this.flushActiveSegment()
       if (this.currentSessionId) {
@@ -332,6 +459,7 @@ export class SessionService {
     standTimer.stop()
     this.persist()
     this.emitState()
+    aiAnalysisService.triggerOnWorkEnd()
   }
 
   getReminderSitMinutes(): number {
@@ -343,10 +471,20 @@ export class SessionService {
     return settings.sitIntervalMinutes
   }
 
-  private beginStanding(reason: SessionEndReason): void {
+  private beginStanding(
+    reason: SessionEndReason,
+    standReasonId?: StandReasonId,
+    durationMinutes?: number
+  ): void {
     this.flushActiveSegment()
     this.endCurrentSession(reason)
     this.recordGamificationBreak()
+
+    const settings = settingsService.getSettings()
+    const mins = durationMinutes ?? settings.standIntervalMinutes
+    this.currentStandReason = standReasonId ?? null
+    this.currentStandDurationMs = mins * 60_000
+    this.pauseReason = null
 
     this.state = 'standing'
     this.currentSessionType = 'standing'
@@ -354,12 +492,44 @@ export class SessionService {
     this.sessionAccumulatedMs = 0
     this.segmentStartAt = Date.now()
     this.activeSessionStartAt = this.segmentStartAt
-    statsService.startSession(this.currentSessionId, 'standing', this.segmentStartAt)
+    statsService.startSession(this.currentSessionId, 'standing', this.segmentStartAt, standReasonId)
 
     sitTimer.stop()
-    standTimer.start(true)
+    standTimer.startWithDuration(this.currentStandDurationMs)
+    activityMonitorService.resetContinuousActive()
     this.persist()
     this.emitState()
+  }
+
+  private beginLongPause(reasonId: StandReasonId, durationMinutes: number): void {
+    this.clearReminderFlow()
+    this.exitInactivePause()
+    this.flushActiveSegment()
+
+    if (this.state === 'sitting' && this.currentSessionId) {
+      this.endCurrentSession('manual')
+    }
+
+    sitTimer.stop()
+    standTimer.stop()
+    this.currentStandReason = null
+    this.currentStandDurationMs = 0
+    this.pauseReason = reasonId
+    this.pausePlannedMs = durationMinutes * 60_000
+    this.currentPauseId = statsService.startPauseRecord(reasonId, durationMinutes)
+    this.pausedBeforeState = 'sitting'
+    this.state = 'paused'
+    this.pausedUntil = Date.now() + durationMinutes * 60_000
+    this.segmentStartAt = 0
+    this.persist()
+    this.emitState()
+  }
+
+  private finishPauseRecord(): void {
+    if (this.currentPauseId) {
+      statsService.endPauseRecord(this.currentPauseId)
+      this.currentPauseId = null
+    }
   }
 
   private startSitSession(): void {
@@ -379,6 +549,7 @@ export class SessionService {
 
   private enterPaused(until: number): void {
     this.clearReminderFlow()
+    this.exitInactivePause()
     this.flushActiveSegment()
 
     if (this.state === 'sitting' || this.state === 'standing' || this.state === 'away') {
@@ -499,13 +670,29 @@ export class SessionService {
   }
 
   private handleIdle(): void {
-    if (this.state === 'sitting') {
-      this.enterAway()
+    const settings = settingsService.getSettings()
+    const idleMs = idleService.getIdleMs()
+    const awayThresholdMs = settings.idleThresholdMinutes * 60_000
+    const inactivePauseMs = Math.min(
+      settings.inactivePauseMinutes * 60_000,
+      Math.max(30_000, awayThresholdMs - 1000)
+    )
+
+    if (this.state === 'sitting' && !this.reminderActive) {
+      if (idleMs >= awayThresholdMs) {
+        this.exitInactivePause()
+        this.enterAway()
+      } else if (idleMs >= inactivePauseMs && !this.inactivePauseActive) {
+        this.enterInactivePause()
+      }
     }
     this.checkAutoStandOnReminder()
   }
 
   private handleActive(): void {
+    if (this.inactivePauseActive && this.state === 'sitting') {
+      this.exitInactivePause()
+    }
     if (this.state === 'away') {
       void this.handleAwayReturn()
       return
@@ -522,6 +709,10 @@ export class SessionService {
     if (this.reminderActive) {
       return
     }
+    if (shouldOfferIdeDefer()) {
+      this.beginIdeDeferFlow()
+      return
+    }
     this.beginReminderFlow()
   }
 
@@ -535,17 +726,32 @@ export class SessionService {
     this.emitState()
   }
 
+  private beginIdeDeferFlow(): void {
+    this.reminderActive = true
+    this.ideDeferPending = true
+    this.markReminderTriggered()
+    const ctx = getIdeGuardContext()
+    const snoozeMinutes = settingsService.getSettings().snoozeMinutes
+    showIdeDeferWindow(ctx?.label ?? 'IDE', snoozeMinutes)
+    this.emitState()
+  }
+
   private beginReminderFlow(): void {
     this.reminderActive = true
     this.toastHandled = false
+    this.ideDeferPending = false
+    this.markReminderTriggered()
     const minutes = this.getReminderSitMinutes()
 
     this.reminderListeners.forEach((fn) => fn(minutes))
-    showReminderToast(minutes)
     this.startReminderWatch()
 
-    // 倒计时归零后立即全屏提醒，与系统通知并行（不再等待 toastGraceSeconds）
-    this.fullscreenReminderListeners.forEach((fn) => fn(minutes))
+    startReminderEscalation(minutes, {
+      onOverlayShown: () => {},
+      onFullscreenShown: () => {
+        this.onReminderShown()
+      }
+    })
     this.emitState()
   }
 
@@ -556,7 +762,7 @@ export class SessionService {
     const autoMs = settingsService.getSettings().autoStandIdleMinutes * 60 * 1000
     if (idleService.getIdleMs() >= autoMs) {
       if (this.acknowledgeStand(true)) {
-        sendReminderPhase('standing')
+        showReminderStandingPhase(this.getReminderSitMinutes())
       }
     }
   }
@@ -604,6 +810,14 @@ export class SessionService {
     return this.sessionAccumulatedMs
   }
 
+  private isSitSegmentTooShort(): boolean {
+    return this.state === 'sitting' && this.getCurrentSitMs() < MIN_TOGGLE_INTERVAL_MS
+  }
+
+  private isStandSegmentTooShort(): boolean {
+    return this.state === 'standing' && this.getCurrentStandMs() < MIN_TOGGLE_INTERVAL_MS
+  }
+
   private getTimerMode(): TimerMode {
     if (this.state === 'sitting') {
       return 'sit'
@@ -631,11 +845,60 @@ export class SessionService {
   }
 
   private clearReminderFlow(): void {
+    if (this.reminderResponsePending) {
+      this.completeReminderResponse('ignored')
+    }
     this.reminderActive = false
+    this.ideDeferPending = false
     this.stopReminderWatch()
     this.clearToastGraceTimer()
-    closeReminderToast()
-    closeReminderWindow()
+    dismissEscalationWindows()
+  }
+
+  private markReminderTriggered(): void {
+    if (this.reminderResponsePending) {
+      return
+    }
+    this.reminderResponsePending = true
+    statsService.recordReminderTriggered()
+  }
+
+  private completeReminderResponse(response: 'on_time' | 'delayed' | 'ignored'): void {
+    if (!this.reminderResponsePending) {
+      return
+    }
+    statsService.recordReminderResponse(response)
+    this.reminderResponsePending = false
+  }
+
+  private getStandResponseType(): 'on_time' | 'delayed' {
+    return hasEscalatedBeyondToast() ? 'delayed' : 'on_time'
+  }
+
+  private resolveReminderResponseAsStand(): void {
+    this.completeReminderResponse(this.getStandResponseType())
+  }
+
+  private enterInactivePause(): void {
+    if (this.state !== 'sitting' || this.inactivePauseActive || this.reminderActive) {
+      return
+    }
+    sitTimer.pause()
+    this.inactivePauseActive = true
+    this.persist()
+    this.emitState()
+  }
+
+  private exitInactivePause(): void {
+    if (!this.inactivePauseActive) {
+      return
+    }
+    this.inactivePauseActive = false
+    if (this.state === 'sitting' && !this.reminderActive) {
+      sitTimer.resume()
+    }
+    this.persist()
+    this.emitState()
   }
 
   private clearToastGraceTimer(): void {
@@ -661,7 +924,18 @@ export class SessionService {
 
   private checkPauseExpired(): void {
     if (this.state === 'paused' && this.pausedUntil > 0 && this.pausedUntil <= Date.now()) {
+      this.finishPauseRecord()
+      const wasLongPause = this.pauseReason !== null
+      this.pauseReason = null
       this.pausedUntil = 0
+
+      if (wasLongPause && this.pausedBeforeState === 'sitting' && !this.currentSessionId) {
+        this.state = 'sitting'
+        this.startSitSession()
+        this.persist()
+        return
+      }
+
       this.exitPaused()
       this.persist()
     }
@@ -713,7 +987,8 @@ export class SessionService {
       standDeadlineAt: standTimer.getDeadlineAt() || undefined,
       pausedBeforeState: this.state === 'paused' ? this.pausedBeforeState : undefined,
       pausedUntil: this.pausedUntil > Date.now() ? this.pausedUntil : undefined,
-      awayEnteredAt: this.awayEnteredAt || undefined
+      awayEnteredAt: this.awayEnteredAt || undefined,
+      pauseReason: this.pauseReason ?? undefined
     })
   }
 

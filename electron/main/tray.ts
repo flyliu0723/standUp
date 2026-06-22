@@ -2,7 +2,8 @@ import { Menu, Tray, nativeImage, app } from 'electron'
 import { join } from 'path'
 import { sessionService } from './services/sessionService'
 import { showMainWindow } from './windows/mainWindow'
-import { createTrayIconWithProgress, loadBaseTrayIcon } from './utils/trayIcon'
+import { createTrayIconWithProgress, loadBaseTrayIcon, getUrgencyLabel } from './utils/trayIcon'
+import { STAND_REASON_OPTIONS } from './constants/standReasons'
 import type { SessionStatus } from './types/session'
 
 let tray: Tray | null = null
@@ -31,15 +32,23 @@ function getStatusTooltip(): string {
   const base = 'standUp — 久坐提醒'
   if (status.isPaused && status.pausedUntil) {
     const remain = Math.max(0, status.pausedUntil - Date.now())
-    return `${base}\n已暂停 · 剩余 ${formatDuration(remain)}`
+    const reasonHint = status.pauseReasonLabel ? `${status.pauseReasonLabel} · ` : ''
+    return `${base}\n${reasonHint}已暂停 · 剩余 ${formatDuration(remain)}`
   }
   switch (status.state) {
     case 'offDuty':
       return `${base}\n未上班 · 左键打开主面板\nCtrl+Alt+S 快捷操作`
-    case 'sitting':
-      return `${base}\n久坐中 · 已坐 ${formatDuration(status.currentSitMs)}\n距提醒 ${formatCountdown(status.timerRemainingMs)}`
-    case 'standing':
-      return `${base}\n休息中 · 已站 ${formatDuration(status.currentStandMs)}\n距坐下 ${formatCountdown(status.timerRemainingMs)}`
+    case 'sitting': {
+      const total = status.sitIntervalMinutes * 60 * 1000
+      const ratio = total > 0 ? status.timerRemainingMs / total : 0
+      const urgency = getUrgencyLabel(ratio)
+      const inactiveHint = status.isInactivePaused ? ' · 输入暂停' : ''
+      return `${base}\n久坐中 · ${urgency}${inactiveHint}\n已坐 ${formatDuration(status.currentSitMs)} · 距提醒 ${formatCountdown(status.timerRemainingMs)}`
+    }
+    case 'standing': {
+      const reasonHint = status.standReasonLabel ? `${status.standReasonLabel} · ` : ''
+      return `${base}\n${reasonHint}休息中 · 已站 ${formatDuration(status.currentStandMs)}\n距坐下 ${formatCountdown(status.timerRemainingMs)}`
+    }
     case 'away':
       return `${base}\n离座中 · 计时已冻结\n已坐 ${formatDuration(status.currentSitMs)}`
     case 'paused':
@@ -81,8 +90,11 @@ function buildMenu(): Menu {
       break
     case 'sitting':
       items.push({
-        label: `起立（已坐 ${formatDuration(status.currentSitMs)}）`,
-        click: () => sessionService.standUp()
+        label: '立即起立',
+        submenu: STAND_REASON_OPTIONS.map((option) => ({
+          label: `${option.emoji} ${option.label}（${option.durationMinutes} 分钟）`,
+          click: () => sessionService.standUpWithReason(option.id)
+        }))
       })
       break
     case 'standing':
@@ -142,11 +154,13 @@ function updateTrayIcon(status?: SessionStatus): void {
   if (s.state === 'sitting') {
     const total = s.sitIntervalMinutes * 60 * 1000
     const ratio = total > 0 ? s.timerRemainingMs / total : 0
-    tray.setImage(createTrayIconWithProgress(ratio))
+    const remainMin = Math.max(0, Math.ceil(s.timerRemainingMs / 60_000))
+    tray.setImage(createTrayIconWithProgress(ratio, remainMin))
   } else if (s.state === 'standing') {
-    const total = s.standIntervalMinutes * 60 * 1000
+    const total = s.standTimerTotalMs || s.standIntervalMinutes * 60 * 1000
     const ratio = total > 0 ? s.timerRemainingMs / total : 0
-    tray.setImage(createTrayIconWithProgress(ratio, false))
+    const remainMin = Math.max(0, Math.ceil(s.timerRemainingMs / 60_000))
+    tray.setImage(createTrayIconWithProgress(ratio, remainMin))
   } else {
     tray.setImage(loadBaseTrayIcon())
   }
@@ -162,8 +176,9 @@ export function playTrayAlert(): void {
     const status = sessionService.getStatus()
     const total = status.sitIntervalMinutes * 60 * 1000
     const ratio = total > 0 ? status.timerRemainingMs / total : 0
+    const remainMin = Math.max(0, Math.ceil(status.timerRemainingMs / 60_000))
     const alert = alertTicks % 2 === 1
-    tray.setImage(createTrayIconWithProgress(ratio, alert))
+    tray.setImage(createTrayIconWithProgress(ratio, remainMin, alert))
     if (alertTicks >= 6) {
       stopTrayAlert()
       updateTrayIcon(status)

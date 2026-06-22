@@ -58,11 +58,11 @@ function destroyAllReminderWindows(): void {
   reminderWindow = null
 }
 
-export function showReminderWindow(sitMinutes: number): void {
+export function showReminderWindow(sitMinutes: number, initialPhase: ReminderPhase = 'alert'): void {
   if (reminderWindow && !reminderWindow.isDestroyed()) {
     confirmed = false
     reminderWindow.focus()
-    sendReminderPhase('alert')
+    sendReminderPhase(initialPhase)
     reminderWindow.webContents.send('reminder:minutes', sitMinutes)
     return
   }
@@ -115,9 +115,13 @@ export function showReminderWindow(sitMinutes: number): void {
 
   reminderWindow.once('ready-to-show', () => {
     reminderWindow?.show()
-    sendReminderPhase('alert')
+    sendReminderPhase(initialPhase)
     reminderWindow?.webContents.send('reminder:minutes', sitMinutes)
   })
+}
+
+export function showReminderStandingPhase(sitMinutes: number): void {
+  showReminderWindow(sitMinutes, 'standing')
 }
 
 export function sendReminderPhase(phase: ReminderPhase): void {

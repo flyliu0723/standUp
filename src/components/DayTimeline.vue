@@ -47,21 +47,93 @@
 
     <div class="timeline__legend">
       <span><i class="dot dot--sit" />久坐</span>
-      <span><i class="dot dot--break" />站立休息</span>
+      <span
+        v-for="item in legendReasons"
+        :key="item.key"
+      >
+        <i class="dot" :style="{ background: item.color }" />{{ item.label }}
+      </span>
+      <span><i class="dot dot--away" />离座</span>
       <span v-if="zoom > 1" class="timeline__legend-hint">按住拖动平移</span>
+    </div>
+
+    <div v-if="hourlyRows.length && zoom <= 1" class="timeline__hourly">
+      <h4>按小时分布</h4>
+      <div class="timeline__hourly-list">
+        <div v-for="row in hourlyRows" :key="row.hour" class="timeline__hourly-row">
+          <span class="timeline__hourly-label">{{ row.label }}</span>
+          <div class="timeline__hourly-bar">
+            <span
+              v-if="row.sitMs"
+              class="timeline__hourly-seg timeline__hourly-seg--sit"
+              :style="{ width: `${segWidth(row.sitMs, row)}%` }"
+            />
+            <span
+              v-for="(seg, segIndex) in hourlyBreakSegments(row)"
+              :key="`${row.hour}-break-${segIndex}`"
+              class="timeline__hourly-seg"
+              :style="hourlyBreakSegStyle(seg, row)"
+            />
+            <span
+              v-if="row.awayMs"
+              class="timeline__hourly-seg timeline__hourly-seg--away"
+              :style="{ width: `${segWidth(row.awayMs, row)}%` }"
+            />
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div v-if="behaviorTags.length" class="timeline__tags">
+      <h4>行为标签</h4>
+      <div class="timeline__tag-list">
+        <span v-for="(tag, i) in behaviorTags" :key="i" class="timeline__tag">
+          {{ tag.time }} · {{ tag.label }} · {{ tag.duration }}
+        </span>
+      </div>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
 import { computed, nextTick, onUnmounted, ref, watch } from 'vue'
-import type { WorkSession } from '@/types/session'
-import { buildTimelineBlocks, timelineBlockStyle } from '@/utils/timelineBlocks'
+import type { PauseRecord, WorkSession } from '@/types/session'
+import {
+  BREAK_REASON_ORDER,
+  buildTimelineBlocks,
+  buildHourlySummary,
+  extractBehaviorTags,
+  timelineBlockStyle,
+  type BreakReasonKey,
+  type HourlySummary
+} from '@/utils/timelineBlocks'
+import { STAND_REASON_COLORS, getStandReasonSolid } from '@/utils/standReasons'
 
 const props = defineProps<{
   sessions: WorkSession[]
   date: string
+  pauseRecords?: PauseRecord[]
 }>()
+
+const pauseList = computed(() => props.pauseRecords || [])
+
+const blocks = computed(() => buildTimelineBlocks(props.sessions, props.date, pauseList.value))
+const hourlyRows = computed(() => buildHourlySummary(props.sessions, props.date, pauseList.value))
+const behaviorTags = computed(() => extractBehaviorTags(props.sessions, props.date, pauseList.value))
+
+const legendReasons = computed(() => {
+  const active = new Set<BreakReasonKey>()
+  for (const block of blocks.value) {
+    if (block.type === 'break' && block.standReason) {
+      active.add(block.standReason)
+    }
+  }
+  return BREAK_REASON_ORDER.filter((key) => active.has(key)).map((key) => ({
+    key,
+    label: STAND_REASON_COLORS[key].label,
+    color: STAND_REASON_COLORS[key].solid
+  }))
+})
 
 const MIN_ZOOM = 1
 const MAX_ZOOM = 24
@@ -73,7 +145,31 @@ let isDragging = false
 let dragStartX = 0
 let dragStartScroll = 0
 
-const blocks = computed(() => buildTimelineBlocks(props.sessions, props.date))
+function segWidth(ms: number, row: HourlySummary): number {
+  const total = row.sitMs + row.breakMs + row.awayMs
+  if (total <= 0) return 0
+  return Math.max(2, Math.round((ms / total) * 100))
+}
+
+function hourlyBreakSegments(row: HourlySummary): Array<{ reason: BreakReasonKey; ms: number }> {
+  return BREAK_REASON_ORDER.filter((reason) => (row.breakByReason[reason] ?? 0) > 0).map(
+    (reason) => ({
+      reason,
+      ms: row.breakByReason[reason] ?? 0
+    })
+  )
+}
+
+function hourlyBreakSegStyle(
+  seg: { reason: BreakReasonKey; ms: number },
+  row: HourlySummary
+): Record<string, string> {
+  const reason = seg.reason === 'unknown' ? undefined : seg.reason
+  return {
+    width: `${segWidth(seg.ms, row)}%`,
+    background: getStandReasonSolid(reason)
+  }
+}
 
 const contentStyle = computed(() => ({
   width: `${zoom.value * 100}%`
@@ -280,10 +376,6 @@ onUnmounted(() => {
     background: linear-gradient(180deg, #f87171, #ef4444);
   }
 
-  &--break {
-    background: linear-gradient(180deg, #86efac, #4ade80);
-  }
-
   &--away {
     background: linear-gradient(180deg, #cbd5e1, #94a3b8);
   }
@@ -330,8 +422,87 @@ onUnmounted(() => {
     background: #ef4444;
   }
 
-  &--break {
-    background: #86efac;
+  &--away {
+    background: #94a3b8;
   }
+}
+
+.timeline__hourly {
+  margin-top: 14px;
+
+  h4 {
+    margin: 0 0 8px;
+    font-size: 13px;
+    color: #64748b;
+    font-weight: 600;
+  }
+}
+
+.timeline__hourly-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 160px;
+  overflow-y: auto;
+}
+
+.timeline__hourly-row {
+  display: grid;
+  grid-template-columns: 44px 1fr;
+  gap: 8px;
+  align-items: center;
+}
+
+.timeline__hourly-label {
+  font-size: 11px;
+  color: #94a3b8;
+  @include display-num;
+}
+
+.timeline__hourly-bar {
+  display: flex;
+  height: 8px;
+  border-radius: 4px;
+  overflow: hidden;
+  background: #f1f5f9;
+}
+
+.timeline__hourly-seg {
+  height: 100%;
+  min-width: 2px;
+
+  &--sit {
+    background: #ef4444;
+  }
+
+  &--away {
+    background: #94a3b8;
+  }
+}
+
+.timeline__tags {
+  margin-top: 14px;
+
+  h4 {
+    margin: 0 0 8px;
+    font-size: 13px;
+    color: #64748b;
+    font-weight: 600;
+  }
+}
+
+.timeline__tag-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.timeline__tag {
+  font-size: 11px;
+  color: #475569;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 999px;
+  padding: 4px 10px;
 }
 </style>

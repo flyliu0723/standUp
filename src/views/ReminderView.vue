@@ -3,7 +3,7 @@
     <div v-if="phase === 'alert'" class="reminder__content">
       <p class="reminder__tag">standUp</p>
       <h1 class="reminder__title">起来，你已经连续坐了 {{ sitMinutes }} 分钟。</h1>
-      <p class="reminder__subtitle">去接杯水再回来。</p>
+      <p class="reminder__subtitle">颈椎给你发了个提醒——去接杯水再回来。</p>
       <div class="reminder__actions">
         <button
           class="reminder__btn reminder__btn--primary"

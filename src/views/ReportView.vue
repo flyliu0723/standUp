@@ -11,34 +11,79 @@
       <n-button v-if="!isToday" size="small" quaternary @click="goToday">
         今天
       </n-button>
+      <n-button
+        class="report__export"
+        size="small"
+        :loading="exporting"
+        @click="handleExport"
+      >
+        导出长图
+      </n-button>
     </header>
 
-    <DayTimeline :sessions="stats.sessions" :date="currentDate" />
+    <div ref="exportRef" class="report__export-area">
+      <p class="report__export-title">standUp 健康报告 · {{ dateLabel }}</p>
 
-    <div class="report__middle">
-      <TrendChart :weekly="summary.weekly" :monthly="summary.monthly" />
-      <div class="report__achieve">
-        <h4>核心成就</h4>
-        <p class="report__achieve-value">{{ formatMs(summary.savedSitMs) }}</p>
-        <p class="report__achieve-label">近 30 日免受久坐伤害时长</p>
-        <p class="report__achieve-sub">
-          本周起立 {{ summary.weekBreakTotal }} 次 · 达标率 {{ summary.goalAchievementRate7 }}%
-        </p>
-        <p class="report__achieve-sub">
-          30 日达标率 {{ summary.goalAchievementRate30 }}%
-        </p>
-        <p v-if="summary.personalPercentileMessage" class="report__achieve-hint">
-          {{ summary.personalPercentileMessage }}
-        </p>
-        <p class="report__achieve-sub">
-          今日推迟提醒 {{ stats.snoozeCount || 0 }} 次
-        </p>
+      <HealthScoreCard v-if="isToday" />
+
+      <AiDailySummary :date="currentDate" :enabled="aiEnabled" />
+
+      <DayTimeline
+        :sessions="stats.sessions"
+        :pause-records="stats.pauseRecords"
+        :date="currentDate"
+      />
+
+      <AppUsageOverview :summary="appUsageSummary" />
+
+      <div class="report__usage-hourly">
+        <AppUsageHourlyChart :summary="appUsageSummary" />
       </div>
-    </div>
 
-    <div v-if="summary.insight" class="report__insight">
-      <span class="report__insight-icon">💡</span>
-      {{ summary.insight.message }}
+      <div class="report__middle">
+        <TrendChart :weekly="summary.weekly" :monthly="summary.monthly" />
+        <div class="report__achieve">
+          <h4>核心成就</h4>
+          <p class="report__achieve-value">{{ formatMs(summary.savedSitMs) }}</p>
+          <p class="report__achieve-label">近 30 日免受久坐伤害时长</p>
+          <p class="report__achieve-sub">
+            本周起立 {{ summary.weekBreakTotal }} 次 · 达标率 {{ summary.goalAchievementRate7 }}%
+          </p>
+          <p class="report__achieve-sub">
+            30 日达标率 {{ summary.goalAchievementRate30 }}%
+          </p>
+          <p v-if="summary.healthMetrics.decompressionMinutes > 0" class="report__achieve-hint">
+            今日腰椎减压约 {{ summary.healthMetrics.decompressionMinutes }} 分钟
+            <template v-if="summary.healthMetrics.calorieAnalogy">
+              · 站立消耗 {{ summary.healthMetrics.calorieAnalogy }}
+            </template>
+          </p>
+          <p v-if="summary.workMetrics.activeWorkMs > 0" class="report__achieve-hint">
+            今日有效搬砖 {{ formatMs(summary.workMetrics.activeWorkMs) }}
+            · 离座 {{ formatMs(summary.workMetrics.awayMs) }}
+            · 休息 {{ formatMs(summary.workMetrics.breakMs) }}
+          </p>
+          <p class="report__achieve-sub">
+            今日执行力 · 按时 {{ summary.execution.onTimeCount }} · 延迟 {{ summary.execution.delayedCount }} · 忽略 {{ summary.execution.ignoredCount }}
+          </p>
+          <p v-if="summary.execution.triggeredCount > 0" class="report__achieve-hint">
+            提醒 {{ summary.execution.triggeredCount }} 次 · 按时率 {{ summary.execution.onTimeRate }}%
+          </p>
+          <p class="report__achieve-sub">
+            今日拖延指数 {{ summary.procrastination.todayRate }}%
+            · 推迟 {{ summary.procrastination.todaySnoozeCount }} 次
+          </p>
+          <p
+            v-if="summary.procrastination.weekRateDelta !== 0"
+            class="report__achieve-sub"
+            :class="procrastinationTrendClass"
+          >
+            {{ procrastinationTrendText }}
+          </p>
+        </div>
+      </div>
+
+      <InsightsBar :insights="summary.insights" />
     </div>
 
     <section v-if="snoozeTableData.length" class="report__detail">
@@ -67,15 +112,28 @@
 
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
-import { NButton, NDataTable, type DataTableColumns } from 'naive-ui'
+import { NButton, NDataTable, useMessage, type DataTableColumns } from 'naive-ui'
 import DayTimeline from '@/components/DayTimeline.vue'
+import AppUsageOverview from '@/components/AppUsageOverview.vue'
+import AppUsageHourlyChart from '@/components/AppUsageHourlyChart.vue'
+import HealthScoreCard from '@/components/HealthScoreCard.vue'
+import AiDailySummary from '@/components/AiDailySummary.vue'
 import TrendChart from '@/components/TrendChart.vue'
+import InsightsBar from '@/components/InsightsBar.vue'
 import { formatMs, formatTime, toDateString } from '@/utils/format'
-import type { DailyStats, ReportSummary } from '@/types/session'
+import { exportElementAsPng } from '@/utils/exportImage'
+import { createEmptyReportSummary } from '@/utils/reportDefaults'
+import { createEmptyAppUsageSummary } from '@/utils/appUsage'
+import type { AppUsageDailySummary, DailyStats } from '@/types/session'
+import { STAND_REASON_LABELS } from '@/utils/standReasons'
 
 defineProps<{
   embedded?: boolean
 }>()
+
+const message = useMessage()
+const exportRef = ref<HTMLElement | null>(null)
+const exporting = ref(false)
 
 const stats = ref<DailyStats>({
   date: '',
@@ -84,22 +142,16 @@ const stats = ref<DailyStats>({
   longestSitMs: 0,
   snoozeCount: 0,
   snoozes: [],
+  reminderTriggeredCount: 0,
+  reminderOnTimeCount: 0,
+  reminderDelayedCount: 0,
+  reminderIgnoredCount: 0,
   sessions: []
 })
 
-const summary = ref<ReportSummary>({
-  weekly: [],
-  monthly: [],
-  insight: null,
-  weekBreakTotal: 0,
-  weekSitMs: 0,
-  monthBreakTotal: 0,
-  savedSitMs: 0,
-  goalAchievementRate7: 0,
-  goalAchievementRate30: 0,
-  personalPercentile: 0,
-  personalPercentileMessage: ''
-})
+const summary = ref(createEmptyReportSummary())
+const appUsageSummary = ref<AppUsageDailySummary>(createEmptyAppUsageSummary())
+const aiEnabled = ref(false)
 
 const selectedTimestamp = ref(Date.now())
 
@@ -113,10 +165,25 @@ const dateLabel = computed(() => {
   return `${d.getFullYear()}年${d.getMonth() + 1}月${d.getDate()}日 周${weekDays[d.getDay()]}`
 })
 
+const procrastinationTrendClass = computed(() =>
+  summary.value.procrastination.weekRateDelta < 0
+    ? 'report__achieve-hint'
+    : 'report__achieve-warn'
+)
+
+const procrastinationTrendText = computed(() => {
+  const delta = summary.value.procrastination.weekRateDelta
+  if (delta < 0) {
+    return `本周拖延率比上周下降 ${Math.abs(delta)}%`
+  }
+  return `本周拖延率比上周上升 ${delta}%`
+})
+
 const columns: DataTableColumns = [
   { title: '开始', key: 'start' },
   { title: '结束', key: 'end' },
   { title: '时长', key: 'duration' },
+  { title: '类型', key: 'kind' },
   { title: '结束原因', key: 'reason' }
 ]
 
@@ -149,6 +216,12 @@ const tableData = computed(() =>
     start: formatTime(s.startAt),
     end: s.endAt ? formatTime(s.endAt) : '—',
     duration: s.endAt ? formatMs(s.endAt - s.startAt) : '进行中',
+    kind:
+      (s.type ?? 'sitting') === 'standing'
+        ? s.standReason
+          ? STAND_REASON_LABELS[s.standReason]
+          : '站立休息'
+        : '久坐',
     reason: s.endReason ? reasonMap[s.endReason] || s.endReason : '—'
   }))
 )
@@ -168,6 +241,30 @@ async function loadStats(): Promise<void> {
   const dateStr = currentDate.value
   stats.value = await window.standUp.getStatsByDate(dateStr)
   summary.value = await window.standUp.getReportSummary(dateStr)
+  appUsageSummary.value = await window.standUp.getAppUsageSummary(dateStr)
+  const settings = await window.standUp.getSettings()
+  aiEnabled.value = settings.enableAiDailyAnalysis
+}
+
+async function loadSettings(): Promise<void> {
+  const settings = await window.standUp.getSettings()
+  aiEnabled.value = settings.enableAiDailyAnalysis
+}
+
+async function handleExport(): Promise<void> {
+  if (!exportRef.value || exporting.value) return
+  exporting.value = true
+  try {
+    await exportElementAsPng(
+      exportRef.value,
+      `standUp-报告-${currentDate.value}.png`
+    )
+    message.success('报告长图已保存')
+  } catch {
+    message.error('导出失败，请稍后重试')
+  } finally {
+    exporting.value = false
+  }
 }
 
 watch(selectedTimestamp, () => {
@@ -175,6 +272,7 @@ watch(selectedTimestamp, () => {
 })
 
 onMounted(() => {
+  loadSettings()
   loadStats()
 })
 </script>
@@ -211,12 +309,37 @@ onMounted(() => {
   text-align: center;
 }
 
+.report__export {
+  margin-left: auto;
+}
+
+.report__export-area {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 16px;
+  border-radius: var(--radius-md);
+  background: #f8fafc;
+}
+
+.report__export-title {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: #64748b;
+  text-align: center;
+}
+
 .report__middle {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 12px;
   min-height: 220px;
   flex-shrink: 0;
+}
+
+.report__usage-hourly {
+  min-height: 280px;
 }
 
 .report__achieve {
@@ -262,20 +385,10 @@ onMounted(() => {
   color: #16a34a;
 }
 
-.report__insight {
-  padding: 12px 16px;
-  border-radius: var(--radius-sm);
-  @include glass-surface;
-  box-shadow: var(--shadow-card);
-  background: rgba(239, 246, 255, 0.85);
-  font-size: 13px;
-  color: #1e40af;
-  line-height: 1.6;
-  flex-shrink: 0;
-}
-
-.report__insight-icon {
-  margin-right: 6px;
+.report__achieve-warn {
+  margin: 8px 0 0;
+  font-size: 12px;
+  color: #d97706;
 }
 
 .report__detail {

@@ -1,6 +1,14 @@
 import Store from 'electron-store'
 import { settingsService } from './settingsService'
-import { DailyStats, SessionEndReason, SessionType, WorkSession, SAVED_MS_PER_BREAK } from '../types/session'
+import { activityMonitorService } from './activityMonitorService'
+import {
+  calcHealthMetrics,
+  calcProcrastinationStats,
+  calcExecutionStats,
+  calcWorkMetrics,
+  generateInsights
+} from './insightsEngine'
+import { DailyStats, PauseRecord, SessionEndReason, SessionType, StandReasonId, WorkSession, SAVED_MS_PER_BREAK } from '../types/session'
 
 interface StatsStoreSchema {
   dailyStats: Record<string, DailyStats>
@@ -23,7 +31,12 @@ function createEmptyDaily(date: string): DailyStats {
     longestSitMs: 0,
     snoozeCount: 0,
     snoozes: [],
-    sessions: []
+    reminderTriggeredCount: 0,
+    reminderOnTimeCount: 0,
+    reminderDelayedCount: 0,
+    reminderIgnoredCount: 0,
+    sessions: [],
+    pauseRecords: []
   }
 }
 
@@ -59,7 +72,12 @@ export class StatsService {
       ...daily,
       totalStandMs: daily.totalStandMs || 0,
       snoozes: [...(daily.snoozes || [])],
-      sessions: daily.sessions.map(normalizeSession)
+      reminderTriggeredCount: daily.reminderTriggeredCount || 0,
+      reminderOnTimeCount: daily.reminderOnTimeCount || 0,
+      reminderDelayedCount: daily.reminderDelayedCount || 0,
+      reminderIgnoredCount: daily.reminderIgnoredCount || 0,
+      sessions: daily.sessions.map(normalizeSession),
+      pauseRecords: [...(daily.pauseRecords || [])]
     }
   }
 
@@ -82,15 +100,53 @@ export class StatsService {
     store.set('dailyStats', all)
   }
 
-  startSession(sessionId: string, type: SessionType, startAt = Date.now()): WorkSession {
+  startSession(
+    sessionId: string,
+    type: SessionType,
+    startAt = Date.now(),
+    standReason?: StandReasonId
+  ): WorkSession {
     const key = todayKey()
     const all = store.get('dailyStats')
     const daily = all[key] || createEmptyDaily(key)
-    const session: WorkSession = { id: sessionId, type, startAt }
+    const session: WorkSession = { id: sessionId, type, startAt, standReason }
     daily.sessions.push(session)
     all[key] = daily
     store.set('dailyStats', all)
     return session
+  }
+
+  startPauseRecord(reason: StandReasonId, plannedMinutes: number): string {
+    const key = todayKey()
+    const all = store.get('dailyStats')
+    const daily = all[key] || createEmptyDaily(key)
+    if (!daily.pauseRecords) {
+      daily.pauseRecords = []
+    }
+    const record: PauseRecord = {
+      id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      reason,
+      startAt: Date.now(),
+      plannedMinutes
+    }
+    daily.pauseRecords.push(record)
+    all[key] = daily
+    store.set('dailyStats', all)
+    return record.id
+  }
+
+  endPauseRecord(recordId: string, endAt = Date.now()): PauseRecord | null {
+    const key = todayKey()
+    const all = store.get('dailyStats')
+    const daily = all[key] || createEmptyDaily(key)
+    const record = (daily.pauseRecords || []).find((r) => r.id === recordId && !r.endAt)
+    if (!record) {
+      return null
+    }
+    record.endAt = endAt
+    all[key] = daily
+    store.set('dailyStats', all)
+    return record
   }
 
   endSession(
@@ -138,6 +194,30 @@ export class StatsService {
     }
     daily.snoozes.push({ at: Date.now(), minutes })
     daily.snoozeCount = (daily.snoozeCount || 0) + 1
+    all[key] = daily
+    store.set('dailyStats', all)
+  }
+
+  recordReminderTriggered(): void {
+    const key = todayKey()
+    const all = store.get('dailyStats')
+    const daily = all[key] || createEmptyDaily(key)
+    daily.reminderTriggeredCount = (daily.reminderTriggeredCount || 0) + 1
+    all[key] = daily
+    store.set('dailyStats', all)
+  }
+
+  recordReminderResponse(response: 'on_time' | 'delayed' | 'ignored'): void {
+    const key = todayKey()
+    const all = store.get('dailyStats')
+    const daily = all[key] || createEmptyDaily(key)
+    if (response === 'on_time') {
+      daily.reminderOnTimeCount = (daily.reminderOnTimeCount || 0) + 1
+    } else if (response === 'delayed') {
+      daily.reminderDelayedCount = (daily.reminderDelayedCount || 0) + 1
+    } else {
+      daily.reminderIgnoredCount = (daily.reminderIgnoredCount || 0) + 1
+    }
     all[key] = daily
     store.set('dailyStats', all)
   }
@@ -263,6 +343,22 @@ export class StatsService {
     }
   }
 
+  private getDailiesForRange(endDateStr: string, days: number, offsetDays = 0): DailyStats[] {
+    const end = new Date(endDateStr)
+    end.setDate(end.getDate() - offsetDays)
+    const result: DailyStats[] = []
+
+    for (let i = days - 1; i >= 0; i--) {
+      const d = new Date(end)
+      d.setDate(d.getDate() - i)
+      const y = d.getFullYear()
+      const m = String(d.getMonth() + 1).padStart(2, '0')
+      const day = String(d.getDate()).padStart(2, '0')
+      result.push(this.getStatsByDate(`${y}-${m}-${day}`))
+    }
+    return result
+  }
+
   getReportSummary(date: string): import('../types/session').ReportSummary {
     const weekly = this.getWeeklyStats(date)
     const monthly = this.getMonthlyStats(date)
@@ -273,16 +369,40 @@ export class StatsService {
     const savedSitMs = this.calcSavedSitMs(monthBreakTotal)
     const todayStats = this.getStatsByDate(date)
     const { percentile, message } = this.calcLocalPercentile(todayStats.breakCount, monthly)
+    const goalAchievementRate7 = this.calcGoalAchievementRate(weekly)
+    const weekDailies = this.getDailiesForRange(date, 7)
+    const prevWeekDailies = this.getDailiesForRange(date, 7, 7)
+    const procrastination = calcProcrastinationStats(todayStats, weekDailies, prevWeekDailies)
+    const healthMetrics = calcHealthMetrics(todayStats)
+    const execution = calcExecutionStats(todayStats)
+    const workMetrics = calcWorkMetrics(todayStats)
+    const activity = activityMonitorService.getSnapshot()
+    const insights = generateInsights({
+      daily: todayStats,
+      peakSitting: insight,
+      procrastination,
+      health: healthMetrics,
+      execution,
+      workMetrics,
+      goalRate7: goalAchievementRate7,
+      personalMessage: message,
+      activity
+    })
 
     return {
       weekly,
       monthly,
       insight,
+      insights,
+      procrastination,
+      healthMetrics,
+      execution,
+      workMetrics,
       weekBreakTotal,
       weekSitMs,
       monthBreakTotal,
       savedSitMs,
-      goalAchievementRate7: this.calcGoalAchievementRate(weekly),
+      goalAchievementRate7,
       goalAchievementRate30: this.calcGoalAchievementRate(monthly),
       personalPercentile: percentile,
       personalPercentileMessage: message

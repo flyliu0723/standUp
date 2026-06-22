@@ -9,6 +9,8 @@ import type { WorkState } from '@/types/session'
 const props = defineProps<{
   state: WorkState
   isPaused?: boolean
+  isInactivePaused?: boolean
+  reasonLabel?: string
 }>()
 
 const LABEL: Record<WorkState, string> = {
@@ -20,8 +22,14 @@ const LABEL: Record<WorkState, string> = {
 }
 
 const label = computed(() => {
+  if (props.reasonLabel) {
+    return props.reasonLabel
+  }
   if (props.isPaused || props.state === 'paused') {
     return '已暂停'
+  }
+  if (props.isInactivePaused && props.state === 'sitting') {
+    return '输入暂停'
   }
   return LABEL[props.state]
 })
@@ -29,6 +37,9 @@ const label = computed(() => {
 const badgeClass = computed(() => {
   if (props.isPaused || props.state === 'paused') {
     return 'status-badge--paused'
+  }
+  if (props.isInactivePaused && props.state === 'sitting') {
+    return 'status-badge--inactive'
   }
   return `status-badge--${props.state}`
 })
@@ -48,8 +59,8 @@ const badgeClass = computed(() => {
   }
 
   &--sitting {
-    background: #fff0f0;
-    color: #ff4d4f;
+    background: #f0fdf4;
+    color: #16a34a;
   }
 
   &--standing {
@@ -65,6 +76,11 @@ const badgeClass = computed(() => {
   &--paused {
     background: #fef3c7;
     color: #d97706;
+  }
+
+  &--inactive {
+    background: #f8fafc;
+    color: #64748b;
   }
 }
 </style>

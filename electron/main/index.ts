@@ -3,14 +3,17 @@ import { createTray, refreshTrayMenu, playTrayAlert } from './tray'
 import { registerIpcHandlers } from './ipc'
 import { settingsService } from './services/settingsService'
 import { sessionService } from './services/sessionService'
+import { recordLaunch } from './services/appMetaService'
 import {
-  initNotificationService,
-  setNotificationActionHandler
+  initNotificationService
 } from './services/notificationService'
 import { workScheduleService } from './services/workScheduleService'
 import { focusGuardService } from './services/focusGuardService'
-import { showReminderWindow } from './windows/reminderWindow'
+import { activityMonitorService } from './services/activityMonitorService'
+import { wellnessService } from './services/wellnessService'
+import { microActionService } from './services/microActionService'
 import { ensureMainWindow, showMainWindow, updateTaskbarProgress } from './windows/mainWindow'
+import { syncAmbientDisplay, destroyAmbientDisplays, applyAmbientSettingsChange } from './services/ambientDisplayService'
 import type { SessionStatus } from './types/session'
 
 declare global {
@@ -26,6 +29,7 @@ const gotLock = app.requestSingleInstanceLock()
 function onSessionChange(status: SessionStatus): void {
   refreshTrayMenu(status)
   updateTaskbarProgress(status)
+  syncAmbientDisplay(settingsService.getSettings(), status)
   BrowserWindow.getAllWindows().forEach((win) => {
     win.webContents.send('session:stateChange', status)
   })
@@ -44,22 +48,12 @@ if (!gotLock) {
     registerIpcHandlers()
     sessionService.init()
 
-    setNotificationActionHandler((action) => {
-      sessionService.handleToastAction(action)
-      refreshTrayMenu()
-    })
-
     ensureMainWindow()
 
     sessionService.onStateChange(onSessionChange)
 
     sessionService.onReminder(() => {
       playTrayAlert()
-    })
-
-    sessionService.onFullscreenReminder((sitMinutes) => {
-      sessionService.onReminderShown()
-      showReminderWindow(sitMinutes)
     })
 
     focusGuardService.setCallback(() => {
@@ -69,7 +63,24 @@ if (!gotLock) {
     focusGuardService.start()
     workScheduleService.start()
 
+    const settings = settingsService.getSettings()
+    if (settings.enableActivityMonitor) {
+      activityMonitorService.start()
+      wellnessService.start()
+    }
+    if (settings.enableMicroActionReminders) {
+      microActionService.start()
+    }
+
     createTray()
+
+    syncAmbientDisplay(settingsService.getSettings(), sessionService.getStatus())
+
+    const launchCount = recordLaunch()
+    // 开发模式或首次启动时打开主界面，避免只有托盘图标时用户找不到应用
+    if (!app.isPackaged || launchCount === 1) {
+      showMainWindow('dashboard')
+    }
 
     globalShortcut.register('CommandOrControl+Alt+S', () => {
       sessionService.toggleSitStand()
@@ -77,6 +88,10 @@ if (!gotLock) {
 
     setInterval(() => {
       sessionService.checkTimers()
+      const status = sessionService.getStatus()
+      if (status.state === 'sitting' || status.state === 'standing') {
+        refreshTrayMenu(status)
+      }
     }, 1000)
 
     setInterval(() => {
@@ -105,6 +120,10 @@ if (!gotLock) {
     globalShortcut.unregisterAll()
     focusGuardService.stop()
     workScheduleService.stop()
+    activityMonitorService.stop()
+    wellnessService.stop()
+    microActionService.stop()
+    destroyAmbientDisplays()
   })
 
   app.on('before-quit', () => {
