@@ -214,12 +214,20 @@
           />
         </div>
 
-        <div v-if="form.aiProvider === 'custom'" class="settings__field">
-          <label>接口地址</label>
+        <div class="settings__field">
+          <label>{{ form.aiProvider === 'custom' ? '接口地址' : '接口地址（可选）' }}</label>
           <n-input
             v-model:value="form.aiBaseUrl"
-            placeholder="https://your-api.com/v1/chat/completions"
+            :placeholder="baseUrlPlaceholder"
           />
+          <p class="settings__hint">
+            <template v-if="form.aiProvider === 'custom'">
+              支持填写基址（如 https://api.example.com）或完整路径 …/v1/chat/completions
+            </template>
+            <template v-else>
+              留空使用官方默认地址；填写代理或自建网关时，可只填基址，会自动补全路径
+            </template>
+          </p>
         </div>
 
         <div class="settings__field">
@@ -346,6 +354,12 @@ const modelPlaceholder = computed(() => {
   if (form.aiProvider === 'openai') return 'gpt-4o-mini'
   if (form.aiProvider === 'deepseek') return 'deepseek-chat'
   return 'your-model-name'
+})
+
+const baseUrlPlaceholder = computed(() => {
+  if (form.aiProvider === 'openai') return 'https://api.openai.com/v1/chat/completions'
+  if (form.aiProvider === 'deepseek') return 'https://api.deepseek.com'
+  return 'https://your-api.com/v1/chat/completions'
 })
 
 function parseTimeParts(time: string): [number, number] {
@@ -527,8 +541,7 @@ async function handleSave(): Promise<void> {
   margin: 8px 0 20px;
   padding: 14px;
   border-radius: var(--radius-md);
-  @include glass-surface;
-  box-shadow: var(--shadow-card);
+  @include elevated-surface;
 
   label {
     display: block;

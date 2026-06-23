@@ -36,7 +36,8 @@ function createEmptyDaily(date: string): DailyStats {
     reminderDelayedCount: 0,
     reminderIgnoredCount: 0,
     sessions: [],
-    pauseRecords: []
+    pauseRecords: [],
+    totalAwayMs: 0
   }
 }
 
@@ -77,7 +78,8 @@ export class StatsService {
       reminderDelayedCount: daily.reminderDelayedCount || 0,
       reminderIgnoredCount: daily.reminderIgnoredCount || 0,
       sessions: daily.sessions.map(normalizeSession),
-      pauseRecords: [...(daily.pauseRecords || [])]
+      pauseRecords: [...(daily.pauseRecords || [])],
+      totalAwayMs: daily.totalAwayMs || 0
     }
   }
 
@@ -183,6 +185,27 @@ export class StatsService {
     all[key] = daily
     store.set('dailyStats', all)
     return session
+  }
+
+  addAwayMs(ms: number): void {
+    if (ms <= 0) {
+      return
+    }
+    const key = todayKey()
+    const all = store.get('dailyStats')
+    const daily = all[key] || createEmptyDaily(key)
+    daily.totalAwayMs = (daily.totalAwayMs || 0) + ms
+    all[key] = daily
+    store.set('dailyStats', all)
+  }
+
+  recordBreakFromAway(): void {
+    const key = todayKey()
+    const all = store.get('dailyStats')
+    const daily = all[key] || createEmptyDaily(key)
+    daily.breakCount += 1
+    all[key] = daily
+    store.set('dailyStats', all)
   }
 
   recordSnooze(minutes: number): void {

@@ -36,10 +36,11 @@ const pointsToNext = computed(() => progressData.value.pointsToNext)
 @use '@/styles/tokens.scss' as *;
 
 .level-progress {
-  padding: 14px 16px;
+  padding: 16px 18px;
   border-radius: var(--radius-md);
-  background: linear-gradient(135deg, rgba(240, 253, 244, 0.9), rgba(236, 253, 245, 0.7));
-  border: 1px solid rgba(187, 247, 208, 0.8);
+  @include elevated-surface;
+  background: linear-gradient(135deg, rgba(240, 253, 244, 0.95), rgba(255, 255, 255, 0.88));
+  border-color: rgba(187, 247, 208, 0.5);
 }
 
 .level-progress__header {
@@ -55,8 +56,8 @@ const pointsToNext = computed(() => progressData.value.pointsToNext)
   font-weight: 800;
   color: #15803d;
   background: rgba(34, 197, 94, 0.15);
-  padding: 2px 8px;
-  border-radius: 6px;
+  padding: 3px 10px;
+  border-radius: var(--radius-pill);
 }
 
 .level-progress__title {

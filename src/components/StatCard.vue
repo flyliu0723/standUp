@@ -20,10 +20,9 @@ defineProps<{
 @use '@/styles/tokens.scss' as *;
 
 .stat-card {
-  padding: 16px 18px;
+  padding: 18px 20px;
   border-radius: var(--radius-md);
-  @include glass-surface;
-  box-shadow: var(--shadow-card);
+  @include elevated-surface;
   transition:
     transform var(--duration-fast) var(--ease-out),
     box-shadow var(--duration-fast) var(--ease-out);
@@ -35,25 +34,27 @@ defineProps<{
 }
 
 .stat-card__label {
-  margin: 0 0 8px;
-  font-size: 13px;
-  color: #64748b;
+  margin: 0 0 10px;
+  font-size: 12px;
+  font-weight: 500;
+  color: #94a3b8;
+  letter-spacing: 0.02em;
 }
 
 .stat-card__value {
   margin: 0;
   @include display-num;
-  font-size: 24px;
+  font-size: 26px;
   font-weight: 700;
   color: #0f172a;
 
   &--highlight {
-    font-size: 28px;
+    font-size: 30px;
     color: var(--color-state-sitting);
   }
 }
 
 .stat-card__footer {
-  margin-top: 12px;
+  margin-top: 14px;
 }
 </style>

@@ -18,14 +18,17 @@ export type MainTab = 'dashboard' | 'report' | 'settings' | 'guide'
 function createMainWindow(show = false, tab: MainTab = 'dashboard'): BrowserWindow {
   const windowIcon = loadWindowIcon()
   mainWindow = new BrowserWindow({
-    width: 820,
-    height: 680,
-    minWidth: 640,
-    minHeight: 520,
+    width: 900,
+    height: 700,
+    minWidth: 720,
+    minHeight: 560,
     show,
+    frame: false,
     autoHideMenuBar: true,
     title: 'standUp — 久坐提醒',
     icon: windowIcon,
+    backgroundColor: '#eef1f500',
+    ...(process.platform === 'win32' ? { backgroundMaterial: 'mica' as const } : {}),
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
       sandbox: false,
@@ -82,6 +85,20 @@ export function showMainWindow(tab: MainTab = 'dashboard'): void {
 
 export function getMainWindow(): BrowserWindow | null {
   return mainWindow
+}
+
+export function minimizeMainWindow(): void {
+  const win = getMainWindow()
+  if (win && !win.isDestroyed()) {
+    win.minimize()
+  }
+}
+
+export function hideMainWindow(): void {
+  const win = getMainWindow()
+  if (win && !win.isDestroyed()) {
+    win.hide()
+  }
 }
 
 export function updateTaskbarProgress(status: SessionStatus): void {

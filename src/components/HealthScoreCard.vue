@@ -128,10 +128,9 @@ onUnmounted(() => {
 @use '@/styles/tokens.scss' as *;
 
 .health {
-  @include glass-surface;
-  box-shadow: var(--shadow-card);
+  @include elevated-surface;
   border-radius: var(--radius-lg);
-  padding: 18px 20px;
+  padding: 20px 22px;
 }
 
 .health__score-row {
@@ -207,9 +206,9 @@ onUnmounted(() => {
 
 .health__advice {
   margin: 0 0 14px;
-  padding: 10px 12px;
-  border-radius: 10px;
-  background: rgba(99, 102, 241, 0.08);
+  padding: 12px 14px;
+  border-radius: var(--radius-sm);
+  background: rgba(99, 102, 241, 0.07);
   color: #4338ca;
   font-size: 13px;
   line-height: 1.55;
@@ -218,7 +217,7 @@ onUnmounted(() => {
 .health__grid {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
-  gap: 10px;
+  gap: var(--space-sm);
 }
 
 .health__item {
@@ -226,6 +225,14 @@ onUnmounted(() => {
   flex-direction: column;
   gap: 4px;
   min-width: 0;
+  padding: 10px 12px;
+  border-radius: var(--radius-sm);
+  background: rgba(248, 250, 252, 0.7);
+  transition: background var(--duration-fast) var(--ease-out);
+
+  &:hover {
+    background: rgba(241, 245, 249, 0.9);
+  }
 }
 
 .health__item-value {

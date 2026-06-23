@@ -16,7 +16,10 @@ const DEFAULT_HUD: WellnessHudStatus = {
   countdownMs: 0,
   windowSwitches5m: 0,
   distinctApps5m: 0,
-  clipboardOps5m: 0
+  clipboardOps5m: 0,
+  foregroundLabel: null,
+  statusLabel: '未上班',
+  workState: 'offDuty'
 }
 
 export class WellnessService {

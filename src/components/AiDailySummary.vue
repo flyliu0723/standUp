@@ -34,14 +34,14 @@
       <p class="ai-summary__overview">{{ analysis.summary }}</p>
 
       <div v-if="analysis.highlights?.length" class="ai-summary__block">
-        <h4>今日要点</h4>
+        <h4>行为微观切片</h4>
         <ul>
           <li v-for="(item, index) in analysis.highlights" :key="`h-${index}`">{{ item }}</li>
         </ul>
       </div>
 
       <div v-if="analysis.suggestions?.length" class="ai-summary__block ai-summary__block--suggest">
-        <h4>行动建议</h4>
+        <h4>无痛微调</h4>
         <ul>
           <li v-for="(item, index) in analysis.suggestions" :key="`s-${index}`">{{ item }}</li>
         </ul>
@@ -55,7 +55,7 @@
     </div>
 
     <p v-else class="ai-summary__hint">
-      点击「生成分析」，AI 将综合今日时间分布、起立次数与执行力给出建议
+      点击「生成分析」，AI 将结合久坐时段、推迟提醒与应用切换，做一份懂工作流的断电复盘
     </p>
   </section>
 </template>

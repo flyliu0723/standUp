@@ -101,9 +101,8 @@ const sections = [
 .guide__section--stretch {
   padding: 16px;
   border-radius: var(--radius-md);
-  @include glass-surface;
-  box-shadow: var(--shadow-card);
-  background: rgba(240, 253, 244, 0.85);
+  @include elevated-surface;
+  background: rgba(240, 253, 244, 0.9);
 }
 
 .guide__stretch-list {

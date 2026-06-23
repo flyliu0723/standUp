@@ -23,6 +23,16 @@
         <span class="wellness-bar__breath-core" />
       </div>
 
+      <div class="wellness-bar__context">
+        <span
+          class="wellness-bar__app"
+          :title="hud.foregroundLabel || '未检测到前台应用'"
+        >
+          {{ displayApp }}
+        </span>
+        <span class="wellness-bar__status" :class="statusClass">{{ hud.statusLabel }}</span>
+      </div>
+
       <div class="wellness-bar__text">
         <span class="wellness-bar__action">{{ displayAction }}</span>
         <span v-if="displayDetail && !isVertical" class="wellness-bar__detail">{{ displayDetail }}</span>
@@ -73,6 +83,20 @@ const wavePoints = computed(() => {
     .join(' ')
 })
 
+const displayApp = computed(() => {
+  const label = hud.value.foregroundLabel
+  if (!label) {
+    return '—'
+  }
+  const maxLen = isVertical.value ? 8 : 14
+  if (label.length <= maxLen) {
+    return label
+  }
+  return `${label.slice(0, maxLen - 1)}…`
+})
+
+const statusClass = computed(() => `wellness-bar__status--${hud.value.workState}`)
+
 const displayAction = computed(() => {
   if (hud.value.mode === 'mental_oom') {
     return '线程交织过载 🧠'
@@ -104,16 +128,15 @@ const countdownText = computed(() => {
   if (!showCountdown.value) {
     return ''
   }
-  const time = formatHudCountdown(hud.value.countdownMs)
-  if (isVertical.value) {
-    return time
-  }
-  const verb = hud.value.bodyTier === 'orange' || hud.value.bodyTier === 'yellow' ? '换脑拉伸' : ''
-  return verb ? `${time} · ${verb}` : time
+  return formatHudCountdown(hud.value.countdownMs)
 })
 
 const tooltip = computed(() => {
-  const parts = [displayAction.value]
+  const parts = [hud.value.statusLabel]
+  if (hud.value.foregroundLabel) {
+    parts.push(hud.value.foregroundLabel)
+  }
+  parts.push(displayAction.value)
   if (displayDetail.value) {
     parts.push(displayDetail.value)
   }
@@ -306,6 +329,61 @@ html.ambient-surface #app {
   border-radius: 50%;
   background: rgba(129, 140, 248, 0.35);
   animation: breath-core 11s ease-in-out infinite;
+}
+
+.wellness-bar__context {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  flex-shrink: 1;
+  max-width: 148px;
+}
+
+.wellness-bar__app {
+  min-width: 0;
+  max-width: 88px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+  font-weight: 500;
+  color: rgba(226, 232, 240, 0.88);
+}
+
+.wellness-bar__status {
+  flex-shrink: 0;
+  padding: 1px 7px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1.4;
+  white-space: nowrap;
+
+  &--offDuty {
+    background: rgba(100, 116, 139, 0.28);
+    color: #cbd5e1;
+  }
+
+  &--sitting {
+    background: rgba(34, 197, 94, 0.2);
+    color: #86efac;
+  }
+
+  &--standing {
+    background: rgba(34, 197, 94, 0.2);
+    color: #86efac;
+  }
+
+  &--away {
+    background: rgba(59, 130, 246, 0.22);
+    color: #93c5fd;
+  }
+
+  &--paused {
+    background: rgba(234, 179, 8, 0.22);
+    color: #fde047;
+  }
 }
 
 .wellness-bar__text {
@@ -530,6 +608,20 @@ html.ambient-surface #app {
 
   &.wellness-bar--edge-right .wellness-bar__content {
     transform: translate(-50%, -50%) rotate(90deg);
+  }
+
+  .wellness-bar__context {
+    max-width: 120px;
+  }
+
+  .wellness-bar__app {
+    max-width: 64px;
+    font-size: 10px;
+  }
+
+  .wellness-bar__status {
+    font-size: 9px;
+    padding: 1px 5px;
   }
 
   .wellness-bar__text {

@@ -3,7 +3,8 @@ import type {
   SessionStatus,
   WellnessBodyTier,
   WellnessHudMode,
-  WellnessHudStatus
+  WellnessHudStatus,
+  WorkState
 } from '../types/session'
 
 const MENTAL_OOM_SWITCHES = 30
@@ -98,6 +99,29 @@ function resolveMode(activity: ActivitySnapshot, session: SessionStatus): Wellne
   return 'normal'
 }
 
+function resolveStatusLabel(session: SessionStatus): string {
+  if (session.pauseReasonLabel) {
+    return session.pauseReasonLabel
+  }
+  if (session.standReasonLabel && session.state === 'standing') {
+    return session.standReasonLabel
+  }
+  if (session.isPaused || session.state === 'paused') {
+    return '已暂停'
+  }
+  if (session.isInactivePaused && session.state === 'sitting') {
+    return '输入暂停'
+  }
+  const LABEL: Record<WorkState, string> = {
+    offDuty: '未上班',
+    sitting: '久坐中',
+    standing: '休息中',
+    away: '离座中',
+    paused: '已暂停'
+  }
+  return LABEL[session.state]
+}
+
 function resolveAction(
   mode: WellnessHudMode,
   session: SessionStatus,
@@ -171,6 +195,9 @@ export function buildWellnessHudStatus(
     countdownMs,
     windowSwitches5m: activity.windowSwitches5m,
     distinctApps5m: activity.distinctApps5m,
-    clipboardOps5m: activity.clipboardOps5m
+    clipboardOps5m: activity.clipboardOps5m,
+    foregroundLabel: activity.foregroundLabel,
+    statusLabel: resolveStatusLabel(session),
+    workState: session.state
   }
 }

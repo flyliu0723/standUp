@@ -20,7 +20,7 @@ import {
   showReminderStandingPhase
 } from '../services/reminderEscalation'
 import { refreshTrayMenu } from '../tray'
-import { showMainWindow } from '../windows/mainWindow'
+import { showMainWindow, minimizeMainWindow, hideMainWindow } from '../windows/mainWindow'
 import { AppSettings } from '../types/session'
 
 export function registerIpcHandlers(): void {
@@ -92,6 +92,9 @@ export function registerIpcHandlers(): void {
     if (partial.enableActivityMonitor !== undefined) {
       if (saved.enableActivityMonitor) {
         activityMonitorService.start()
+        if (sessionService.getStatus().state !== 'offDuty') {
+          activityMonitorService.resumeUsageTracking()
+        }
         wellnessService.start()
       } else {
         activityMonitorService.stop()
@@ -227,5 +230,13 @@ export function registerIpcHandlers(): void {
 
   ipcMain.handle('ai:generate', (_event, date: string, force?: boolean) => {
     return aiAnalysisService.generate(date, { force: Boolean(force) })
+  })
+
+  ipcMain.handle('window:minimize', () => {
+    minimizeMainWindow()
+  })
+
+  ipcMain.handle('window:close', () => {
+    hideMainWindow()
   })
 }

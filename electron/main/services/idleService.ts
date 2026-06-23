@@ -56,11 +56,16 @@ export class IdleService {
   }
 
   private poll(): void {
-    const thresholdMs = settingsService.getSettings().idleThresholdMinutes * 60 * 1000
+    const settings = settingsService.getSettings()
+    const thresholdMs = settings.idleThresholdMinutes * 60 * 1000
+    const inactivePauseMs = Math.min(
+      settings.inactivePauseMinutes * 60 * 1000,
+      Math.max(30_000, thresholdMs - 1000)
+    )
     const idleMs = this.getIdleMs()
     if (idleMs >= thresholdMs) {
       this.onIdle?.()
-    } else if (idleMs < 30_000) {
+    } else if (idleMs < inactivePauseMs) {
       this.onActive?.()
     }
   }

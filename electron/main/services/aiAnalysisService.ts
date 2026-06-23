@@ -24,13 +24,35 @@ const PROVIDER_DEFAULTS: Record<
   }
 }
 
-const SYSTEM_PROMPT = `你是 standUp 久坐健康助手。根据用户提供的每日健康数据 JSON，生成简洁、可执行的健康复盘。
-必须只输出 JSON，不要 markdown，不要额外说明。字段要求：
-- summary: string，2-3 句总评，聚焦颈椎/腰椎/久坐风险
-- highlights: string[]，2-4 条今日亮点或主要问题
-- suggestions: string[]，2-4 条具体可执行建议（可含提醒间隔、时段策略等）
-- tomorrowTip: string，1 句明日行动提示
-语气鼓励但直接，避免空泛鸡汤。`
+const SYSTEM_PROMPT = `# Role
+你是一位兼具人体工程学与认知心理学视角的健康搭档，服务对象是资深前端 / Vibe Coding 工程师。你崇尚「非侵入式」与顺应心智流动（Flow）的健康管理，任务是审计用户一天的坐立健康与多应用切换日志，输出一份【无痛、懂他、直击潜意识习惯】的断电复盘。
+
+# Tone
+像并肩作战的资深搭档或懂他的设计大佬：可以有一点极客冷幽默，但务必具体、可验证。
+严禁：教条式命令、爹味说教（如「克服拖延」「铃响即起」）、堆砌冰冷百分比、空泛鸡汤、未结合日志的泛泛而谈。
+
+# Audit Dimensions（必须基于 JSON 数据交叉分析，禁止只做数字加减法）
+1. 【抗拒起身的心智诱因】：结合 delayEvents（推迟提醒）、peakSittingHours、execution（延迟/忽略）、sittingTimeline，分析「明知该站却站不起来」的时段。是多线程超频的心智粘性，还是与 AI 死磕的盲区？
+2. 【伪高效与精神超频】：结合 appDistribution.hourlyPattern、topApps（若有）、ruleInsights，找出肉体在坐但大脑因频繁切应用而「精神 OOM」的节点。
+3. 【顺水推舟的破局点】：从日志中找最适合起身的黄金断点（任务间隙、AI 生成等待期、高频乱切开始变慢的疲劳期），策略必须能嵌入现有工作流，而非强行打断。
+
+# Output（只输出 JSON，不要 markdown 代码块，不要任何额外说明）
+字段与语义映射：
+- summary：对应「今日心智与肉体硬核复盘」，2-3 句直击今天最隐蔽的一个行为坏习惯及其背后心理状态。
+- highlights：固定 2 条，对应「行为微观切片」：
+  1) 以「粘在椅子上的黑洞：」开头，写下午/重灾区连续久坐与延迟响应的真实原因；
+  2) 以「脑内存溢出点：」开头，写应用高频切换与健康崩盘的重合点。
+- suggestions：固定 2 条，对应「无痛微调」：
+  1) 以「微调 1：」开头，针对重灾区给一个无感降级策略（可结合 AI 烘焙期、等编译、呼吸条等场景）；
+  2) 以「微调 2：」开头，说明如何利用工作流断点起立。
+- tomorrowTip：1 句明日行动提示，具体、可执行、顺应工作流。
+
+# Constraints
+- 优先引用日志中的时段（如 14:00-18:00）、应用名或行为模式；数据不足时诚实说明，不要编造。
+- 数字仅作佐证，每条建议不超过 2 个数字，避免报告体。
+- 全部使用简体中文。`
+
+const USER_PROMPT_PREFIX = `请根据以下 standUp 用户今日健康与行为日志，完成断电复盘。请严格按 system 要求输出 JSON：`
 
 const store = new Store<AiStoreSchema>({
   name: 'standup-ai-analysis',
@@ -47,24 +69,43 @@ function todayKey(): string {
   return `${y}-${m}-${d}`
 }
 
+function normalizeChatCompletionsUrl(raw: string): string {
+  let url = raw.trim().replace(/\/+$/, '')
+  if (!url) {
+    return url
+  }
+  if (/\/chat\/completions$/i.test(url)) {
+    return url
+  }
+  if (/\/v1$/i.test(url)) {
+    return `${url}/chat/completions`
+  }
+  if (/^https?:\/\/[^/]+$/i.test(url)) {
+    return `${url}/v1/chat/completions`
+  }
+  return `${url}/chat/completions`
+}
+
 function resolveEndpoint(settings: AppSettings): { url: string; model: string } | null {
   if (!settings.aiApiKey.trim()) {
     return null
   }
 
+  const customUrl = settings.aiBaseUrl.trim()
+  const model = settings.aiModel.trim()
+
   if (settings.aiProvider === 'custom') {
-    const url = settings.aiBaseUrl.trim()
-    const model = settings.aiModel.trim()
-    if (!url || !model) {
+    if (!customUrl || !model) {
       return null
     }
-    return { url, model }
+    return { url: normalizeChatCompletionsUrl(customUrl), model }
   }
 
   const defaults = PROVIDER_DEFAULTS[settings.aiProvider]
+  const url = customUrl ? normalizeChatCompletionsUrl(customUrl) : defaults.baseUrl
   return {
-    url: defaults.baseUrl,
-    model: settings.aiModel.trim() || defaults.model
+    url,
+    model: model || defaults.model
   }
 }
 
@@ -163,7 +204,7 @@ export class AiAnalysisService {
       const errorAnalysis: AiDailyAnalysis = {
         date,
         status: 'error',
-        error: '请先配置 AI API Key' + (settings.aiProvider === 'custom' ? '、接口地址和模型' : '')
+        error: '请先配置 AI API Key' + (settings.aiProvider === 'custom' ? '、接口地址和模型' : '（自定义服务商还需填写接口地址与模型）')
       }
       saveAnalysis(errorAnalysis)
       return errorAnalysis
@@ -194,12 +235,12 @@ export class AiAnalysisService {
         },
         body: JSON.stringify({
           model: endpoint.model,
-          temperature: 0.4,
+          temperature: 0.55,
           messages: [
             { role: 'system', content: SYSTEM_PROMPT },
             {
               role: 'user',
-              content: `请分析以下 standUp 用户今日健康数据：\n${JSON.stringify(payload, null, 2)}`
+              content: `${USER_PROMPT_PREFIX}\n${JSON.stringify(payload, null, 2)}`
             }
           ]
         }),
@@ -208,7 +249,13 @@ export class AiAnalysisService {
 
       if (!response.ok) {
         const errText = await response.text().catch(() => '')
-        throw new Error(`API 请求失败 (${response.status})${errText ? `: ${errText.slice(0, 120)}` : ''}`)
+        const detail = errText ? `: ${errText.slice(0, 120)}` : ''
+        if (response.status === 404) {
+          throw new Error(
+            `API 地址无效 (404)：请确认接口地址正确，需为完整路径或基址（如 https://api.deepseek.com），将自动补全为 …/v1/chat/completions${detail}`
+          )
+        }
+        throw new Error(`API 请求失败 (${response.status})${detail}`)
       }
 
       const data = (await response.json()) as {

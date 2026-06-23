@@ -15,7 +15,7 @@ const CALORIES_PER_STAND_MINUTE = 0.8
 
 function calcAwayMsFromSessions(daily: DailyStats): number {
   const sessions = [...daily.sessions].sort((a, b) => a.startAt - b.startAt)
-  let awayMs = 0
+  let awayMs = daily.totalAwayMs || 0
   for (let i = 1; i < sessions.length; i++) {
     const prev = sessions[i - 1]
     const curr = sessions[i]

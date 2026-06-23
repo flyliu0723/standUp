@@ -66,6 +66,9 @@ if (!gotLock) {
     const settings = settingsService.getSettings()
     if (settings.enableActivityMonitor) {
       activityMonitorService.start()
+      if (sessionService.getStatus().state !== 'offDuty') {
+        activityMonitorService.resumeUsageTracking()
+      }
       wellnessService.start()
     }
     if (settings.enableMicroActionReminders) {

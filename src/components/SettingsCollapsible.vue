@@ -27,10 +27,9 @@ withDefaults(
 @use '@/styles/tokens.scss' as *;
 
 .settings-collapse {
-  @include glass-surface;
-  box-shadow: var(--shadow-card);
+  @include elevated-surface;
   border-radius: var(--radius-lg);
-  margin-bottom: 12px;
+  margin-bottom: var(--space-sm);
   overflow: hidden;
 
   &__summary {
@@ -38,10 +37,15 @@ withDefaults(
     align-items: center;
     justify-content: space-between;
     gap: 12px;
-    padding: 14px 16px;
+    padding: 16px 18px;
     cursor: pointer;
     list-style: none;
     user-select: none;
+    transition: background var(--duration-fast) var(--ease-out);
+
+    &:hover {
+      background: rgba(241, 245, 249, 0.5);
+    }
 
     &::-webkit-details-marker {
       display: none;
@@ -61,8 +65,7 @@ withDefaults(
   }
 
   &__body {
-    padding: 0 16px 16px;
-    border-top: 1px solid rgba(148, 163, 184, 0.2);
+    padding: 4px 18px 18px;
   }
 }
 </style>

@@ -52,6 +52,8 @@ export interface DailyStats {
   reminderIgnoredCount: number
   sessions: WorkSession[]
   pauseRecords?: PauseRecord[]
+  /** 未通过 session 间隙记录的离座时长（如下班时仍处于 away） */
+  totalAwayMs?: number
 }
 
 export type AmbientDisplayMode = 'none' | 'statusBar' | 'desktopPet'
@@ -265,6 +267,9 @@ export interface WellnessHudStatus {
   windowSwitches5m: number
   distinctApps5m: number
   clipboardOps5m: number
+  foregroundLabel: string | null
+  statusLabel: string
+  workState: WorkState
 }
 
 export interface DailyHealthSummary {
@@ -365,6 +370,7 @@ export interface PersistedRuntime {
   pausedBeforeState?: WorkState
   pausedUntil?: number
   awayEnteredAt?: number
+  awaySitEndAt?: number
   pauseReason?: StandReasonId
   /** @deprecated */
   currentSessionStartAt?: number

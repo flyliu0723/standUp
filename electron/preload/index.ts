@@ -65,6 +65,8 @@ export interface StandUpApi {
   getDailyHealthSummary: () => Promise<DailyHealthSummary>
   getAiAnalysis: (date: string) => Promise<AiDailyAnalysis | null>
   generateAiAnalysis: (date: string, force?: boolean) => Promise<AiDailyAnalysis>
+  windowMinimize: () => Promise<void>
+  windowClose: () => Promise<void>
 }
 
 const api: StandUpApi = {
@@ -146,7 +148,9 @@ const api: StandUpApi = {
   getAppCategoryList: () => ipcRenderer.invoke('app-categories:list'),
   getDailyHealthSummary: () => ipcRenderer.invoke('health:dailySummary'),
   getAiAnalysis: (date) => ipcRenderer.invoke('ai:getAnalysis', date),
-  generateAiAnalysis: (date, force) => ipcRenderer.invoke('ai:generate', date, force)
+  generateAiAnalysis: (date, force) => ipcRenderer.invoke('ai:generate', date, force),
+  windowMinimize: () => ipcRenderer.invoke('window:minimize'),
+  windowClose: () => ipcRenderer.invoke('window:close')
 }
 
 contextBridge.exposeInMainWorld('standUp', api)

@@ -294,18 +294,18 @@ onUnmounted(() => {
 .dashboard {
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: var(--space-md);
+  max-width: 720px;
 }
 
 .dashboard__hero {
-  @include glass-surface;
-  box-shadow: var(--shadow-card);
+  @include elevated-surface;
   border-radius: var(--radius-lg);
-  padding: 20px 24px;
+  padding: var(--space-lg) var(--space-xl);
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 16px;
+  gap: var(--space-md);
 }
 
 .dashboard__hero-head {
@@ -393,8 +393,7 @@ onUnmounted(() => {
   align-items: center;
   justify-content: center;
   width: 100%;
-  padding-top: 14px;
-  border-top: 1px solid var(--color-border-subtle);
+  padding-top: var(--space-md);
   gap: 0;
 }
 
@@ -403,7 +402,14 @@ onUnmounted(() => {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 4px;
+  gap: 6px;
+  padding: var(--space-sm) 0;
+  border-radius: var(--radius-sm);
+  transition: background var(--duration-fast) var(--ease-out);
+
+  &:hover {
+    background: rgba(241, 245, 249, 0.6);
+  }
 }
 
 .dashboard__today-value {
@@ -420,29 +426,31 @@ onUnmounted(() => {
 
 .dashboard__today-divider {
   width: 1px;
-  height: 28px;
+  height: 32px;
   background: var(--color-border-subtle);
   flex-shrink: 0;
+  opacity: 0.6;
 }
 
 .dashboard__stats h3 {
-  margin: 0 0 10px;
-  font-size: 14px;
-  color: #64748b;
+  margin: var(--space-sm) 0 var(--space-sm);
+  font-size: 13px;
+  color: #94a3b8;
   font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
 }
 
 .dashboard__cards {
   display: grid;
   grid-template-columns: repeat(2, 1fr);
-  gap: 10px;
+  gap: var(--space-sm);
 }
 
 .dashboard__details {
-  @include glass-surface;
-  box-shadow: var(--shadow-card);
+  @include elevated-surface;
   border-radius: var(--radius-lg);
-  padding: 0 16px 12px;
+  padding: 0 var(--space-md) var(--space-sm);
 
   summary {
     cursor: pointer;

@@ -160,6 +160,33 @@ export class ActivityMonitorService {
   private keyboardHookCount = 0
   private mouseHookCount = 0
   private hooksInstalled = false
+  private usageTrackingEnabled = false
+
+  pauseUsageTracking(): void {
+    if (!this.usageTrackingEnabled) {
+      appUsageService.flushCurrentSegment()
+      return
+    }
+    const now = Date.now()
+    if (this.lastForegroundApp && this.foregroundSince) {
+      const duration = now - this.foregroundSince
+      const category = classifyApp(this.lastForegroundApp, this.lastForegroundTitle)
+      this.categoryMs[category] += duration
+    }
+    appUsageService.flushCurrentSegment(now)
+    this.lastForegroundApp = null
+    this.lastForegroundTitle = null
+    this.foregroundSince = 0
+    this.usageTrackingEnabled = false
+  }
+
+  resumeUsageTracking(): void {
+    this.usageTrackingEnabled = true
+  }
+
+  isUsageTrackingEnabled(): boolean {
+    return this.usageTrackingEnabled
+  }
 
   start(): void {
     if (process.platform !== 'win32') {
@@ -421,6 +448,10 @@ export class ActivityMonitorService {
   }
 
   private pollWindow(): void {
+    if (!this.usageTrackingEnabled) {
+      return
+    }
+
     const processName = getForegroundProcessName()
     const windowTitle = getForegroundWindowTitle()
     const now = Date.now()

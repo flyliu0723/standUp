@@ -46,12 +46,16 @@ const badgeClass = computed(() => {
 </script>
 
 <style lang="scss" scoped>
+@use '@/styles/tokens.scss' as *;
+
 .status-badge {
   display: inline-block;
-  padding: 4px 12px;
-  border-radius: 999px;
+  padding: 5px 14px;
+  border-radius: var(--radius-pill);
   font-size: 12px;
   font-weight: 600;
+  letter-spacing: 0.01em;
+  box-shadow: var(--shadow-sm);
 
   &--offDuty {
     background: #f1f5f9;

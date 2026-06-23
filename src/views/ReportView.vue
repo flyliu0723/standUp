@@ -345,9 +345,8 @@ onMounted(() => {
 .report__achieve {
   padding: 16px;
   border-radius: var(--radius-md);
-  @include glass-surface;
-  box-shadow: var(--shadow-card);
-  background: linear-gradient(135deg, rgba(254, 242, 242, 0.85), rgba(255, 247, 237, 0.85));
+  @include elevated-surface;
+  background: linear-gradient(135deg, rgba(254, 242, 242, 0.9), rgba(255, 247, 237, 0.88));
   text-align: center;
 
   h4 {

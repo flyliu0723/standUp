@@ -20,6 +20,11 @@ function formatHourLabel(hour: number): string {
   return `${String(hour).padStart(2, '0')}:00`
 }
 
+function formatTimeMs(ts: number): string {
+  const d = new Date(ts)
+  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
+}
+
 function findPeakSittingHours(daily: DailyStats): string[] {
   const buckets = new Array(24).fill(0) as number[]
   for (const session of daily.sessions) {
@@ -87,7 +92,19 @@ export function buildAiAnalysisPayload(params: {
       breakMinutes: roundMinutes(report.workMetrics.breakMs),
       focusPeak: report.workMetrics.focusPeakMessage || null,
       peakSittingHours: peakHours,
-      peakSittingInsight: report.insight?.message || null
+      peakSittingInsight: report.insight?.message || null,
+      sittingTimeline: daily.sessions
+        .filter((s) => (s.type ?? 'sitting') === 'sitting' && s.endAt)
+        .map((s) => ({
+          start: formatTimeMs(s.startAt),
+          end: formatTimeMs(s.endAt!),
+          minutes: roundMinutes(s.endAt! - s.startAt),
+          endReason: s.endReason || 'unknown'
+        })),
+      delayEvents: (daily.snoozes || []).map((s) => ({
+        at: formatTimeMs(s.at),
+        delayedMinutes: s.minutes
+      }))
     },
     trends: {
       goalAchievementRate7: report.goalAchievementRate7,

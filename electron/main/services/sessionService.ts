@@ -71,6 +71,7 @@ export class SessionService {
   private pausedBeforeState: WorkState = 'sitting'
   private pausedUntil = 0
   private awayEnteredAt = 0
+  private awaySitEndAt = 0
   private awayConfirmInProgress = false
   private activeSessionStartAt = 0
   private inactivePauseActive = false
@@ -99,7 +100,10 @@ export class SessionService {
     this.pausedBeforeState = runtime.pausedBeforeState ?? 'sitting'
     this.pausedUntil = runtime.pausedUntil ?? 0
     this.awayEnteredAt = runtime.awayEnteredAt ?? 0
+    this.awaySitEndAt = runtime.awaySitEndAt ?? 0
     this.pauseReason = runtime.pauseReason ?? null
+
+    this.migrateAwayState()
 
     statsService.checkDateRollover()
     this.restoreTimers(runtime)
@@ -107,10 +111,12 @@ export class SessionService {
   }
 
   applySettingsChange(partial: Partial<AppSettings>): AppSettings {
+    const previous = settingsService.getSettings()
     const saved = settingsService.saveSettings(partial)
 
     if (
       partial.sitIntervalMinutes !== undefined &&
+      partial.sitIntervalMinutes !== previous.sitIntervalMinutes &&
       this.state === 'sitting'
     ) {
       sitTimer.start(true)
@@ -120,6 +126,7 @@ export class SessionService {
 
     if (
       partial.standIntervalMinutes !== undefined &&
+      partial.standIntervalMinutes !== previous.standIntervalMinutes &&
       this.state === 'standing'
     ) {
       standTimer.start(true)
@@ -321,6 +328,7 @@ export class SessionService {
     }
     if (this.state === 'offDuty') {
       statsService.markWorkStart()
+      activityMonitorService.resumeUsageTracking()
     }
 
     if (this.state === 'standing') {
@@ -443,9 +451,15 @@ export class SessionService {
       this.pausedUntil = 0
     }
     if (this.state === 'sitting' || this.state === 'standing' || this.state === 'away') {
-      this.flushActiveSegment()
-      if (this.currentSessionId) {
-        this.endCurrentSession('endWork')
+      if (this.state === 'away') {
+        if (this.awaySitEndAt > 0) {
+          statsService.addAwayMs(Date.now() - this.awaySitEndAt)
+        }
+      } else {
+        this.flushActiveSegment()
+        if (this.currentSessionId) {
+          this.endCurrentSession('endWork')
+        }
       }
     }
     this.resetReminderFlags()
@@ -455,8 +469,10 @@ export class SessionService {
     this.sessionAccumulatedMs = 0
     this.segmentStartAt = 0
     this.awayEnteredAt = 0
+    this.awaySitEndAt = 0
     sitTimer.stop()
     standTimer.stop()
+    activityMonitorService.pauseUsageTracking()
     this.persist()
     this.emitState()
     aiAnalysisService.triggerOnWorkEnd()
@@ -597,7 +613,16 @@ export class SessionService {
     this.flushActiveSegment()
     this.segmentStartAt = 0
     sitTimer.pause()
-    this.awayEnteredAt = Date.now()
+
+    const thresholdMs = settingsService.getSettings().idleThresholdMinutes * 60_000
+    const now = Date.now()
+    this.awayEnteredAt = now
+    this.awaySitEndAt = Math.max(this.activeSessionStartAt, now - thresholdMs)
+
+    if (this.currentSessionId) {
+      this.endCurrentSession('idle', this.awaySitEndAt)
+    }
+
     this.state = 'away'
     this.persist()
     this.emitState()
@@ -609,8 +634,9 @@ export class SessionService {
     }
     this.awayConfirmInProgress = true
 
-    const idleMs = Date.now() - this.awayEnteredAt
-    const idleMinutes = Math.max(1, Math.round(idleMs / 60_000))
+    const awayStartAt = this.awaySitEndAt || this.awayEnteredAt
+    const awayMs = Date.now() - awayStartAt
+    const awayMinutes = Math.max(1, Math.round(awayMs / 60_000))
 
     try {
       const { response } = await dialog.showMessageBox({
@@ -619,7 +645,7 @@ export class SessionService {
         defaultId: 1,
         cancelId: 1,
         title: 'standUp — 离座确认',
-        message: `检测到约 ${idleMinutes} 分钟无键鼠操作`,
+        message: `检测到约 ${awayMinutes} 分钟无键鼠操作`,
         detail: '这段时间算休息（起立），还是继续计入久坐？'
       })
 
@@ -630,6 +656,7 @@ export class SessionService {
       }
     } finally {
       this.awayEnteredAt = 0
+      this.awaySitEndAt = 0
       this.awayConfirmInProgress = false
       this.persist()
       this.emitState()
@@ -638,23 +665,17 @@ export class SessionService {
 
   /** 场景 A：用户确实去休息了 */
   private resolveAwayAsBreak(): void {
-    const thresholdMs = settingsService.getSettings().idleThresholdMinutes * 60_000
-    const sitEndAt = Math.max(this.activeSessionStartAt, this.awayEnteredAt - thresholdMs)
-
-    if (this.currentSessionId) {
-      statsService.endSession(this.currentSessionId, 'auto_idle', sitEndAt)
-      this.currentSessionId = null
-      this.currentSessionType = null
-    }
-
+    const now = Date.now()
+    statsService.recordBreakFromAway()
     this.recordGamificationBreak()
+
     this.state = 'standing'
     this.currentSessionType = 'standing'
     this.currentSessionId = randomUUID()
     this.sessionAccumulatedMs = 0
-    this.segmentStartAt = Date.now()
-    this.activeSessionStartAt = sitEndAt
-    statsService.startSession(this.currentSessionId, 'standing', sitEndAt)
+    this.segmentStartAt = now
+    this.activeSessionStartAt = now
+    statsService.startSession(this.currentSessionId, 'standing', now)
 
     sitTimer.stop()
     standTimer.start(true)
@@ -662,10 +683,17 @@ export class SessionService {
 
   /** 场景 B：用户仍在座位，空闲时间计入久坐 */
   private resolveAwayStillSitting(): void {
-    const idleMs = Date.now() - this.awayEnteredAt
-    this.sessionAccumulatedMs += idleMs
+    const now = Date.now()
+    const sitStartAt = this.awaySitEndAt || this.awayEnteredAt
+
     this.state = 'sitting'
-    this.segmentStartAt = Date.now()
+    this.currentSessionType = 'sitting'
+    this.currentSessionId = randomUUID()
+    this.sessionAccumulatedMs = 0
+    this.segmentStartAt = now
+    this.activeSessionStartAt = sitStartAt
+    statsService.startSession(this.currentSessionId, 'sitting', sitStartAt)
+
     sitTimer.resume()
   }
 
@@ -941,6 +969,25 @@ export class SessionService {
     }
   }
 
+  private migrateAwayState(): void {
+    if (this.state !== 'away') {
+      return
+    }
+    if (!this.awaySitEndAt && this.awayEnteredAt) {
+      const thresholdMs = settingsService.getSettings().idleThresholdMinutes * 60_000
+      this.awaySitEndAt = Math.max(this.activeSessionStartAt, this.awayEnteredAt - thresholdMs)
+    }
+    if (this.currentSessionId) {
+      const sitEndAt = this.awaySitEndAt || Date.now()
+      statsService.endSession(this.currentSessionId, 'idle', sitEndAt)
+      this.currentSessionId = null
+      this.currentSessionType = null
+      this.sessionAccumulatedMs = 0
+      this.segmentStartAt = 0
+      this.persist()
+    }
+  }
+
   private restoreTimers(runtime: PersistedRuntime): void {
     if (this.state === 'paused') {
       return
@@ -988,6 +1035,7 @@ export class SessionService {
       pausedBeforeState: this.state === 'paused' ? this.pausedBeforeState : undefined,
       pausedUntil: this.pausedUntil > Date.now() ? this.pausedUntil : undefined,
       awayEnteredAt: this.awayEnteredAt || undefined,
+      awaySitEndAt: this.awaySitEndAt || undefined,
       pauseReason: this.pauseReason ?? undefined
     })
   }
