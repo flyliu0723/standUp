@@ -1,17 +1,30 @@
 <template>
   <div class="reminder" :class="`reminder--${phase}`">
     <div v-if="phase === 'alert'" class="reminder__content">
-      <p class="reminder__tag">standUp</p>
-      <h1 class="reminder__title">起来，你已经连续坐了 {{ sitMinutes }} 分钟。</h1>
-      <p class="reminder__subtitle">颈椎给你发了个提醒——去接杯水再回来。</p>
+      <p class="reminder__tag">{{ copy.tag }}</p>
+      <h1 class="reminder__title">{{ copy.title }}</h1>
+      <p class="reminder__subtitle">{{ copy.subtitle }}</p>
+
+      <div class="reminder__unlock">
+        <p class="reminder__unlock-label">
+          {{ idleProgress.unlocked ? '已检测到离开，正在解除…' : '离开座位、保持不操作即可自动解除' }}
+        </p>
+        <p v-if="!idleProgress.unlocked" class="reminder__unlock-count">
+          <span class="reminder__unlock-num">{{ idleProgress.remainingSeconds }}</span> 秒后自动判定为已起身
+        </p>
+        <div class="reminder__unlock-bar">
+          <div
+            class="reminder__unlock-fill"
+            :class="{ 'reminder__unlock-fill--done': idleProgress.unlocked }"
+            :style="{ width: `${Math.round(idleProgress.progress * 100)}%` }"
+          />
+        </div>
+        <p class="reminder__unlock-meta">
+          一旦碰键盘或鼠标，倒计时会重新开始
+        </p>
+      </div>
+
       <div class="reminder__actions">
-        <button
-          class="reminder__btn reminder__btn--primary"
-          :disabled="loading"
-          @click="handleConfirm"
-        >
-          {{ loading ? '处理中…' : '我起来了' }}
-        </button>
         <button
           class="reminder__btn reminder__btn--secondary"
           :disabled="loading"
@@ -49,8 +62,23 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { STRETCH_TIPS } from '@/constants/stretchTips'
+import type { ReminderCopyPayload, ReminderIdleProgress } from '@/types/session'
 
 type Phase = 'alert' | 'standing'
+
+const DEFAULT_COPY: ReminderCopyPayload = {
+  tag: 'standUp',
+  title: '起来，该活动一下了。',
+  subtitle: '离开座位即可解除提醒。'
+}
+
+const DEFAULT_IDLE: ReminderIdleProgress = {
+  idleSeconds: 0,
+  requiredSeconds: 30,
+  remainingSeconds: 30,
+  progress: 0,
+  unlocked: false
+}
 
 const phase = ref<Phase>('alert')
 const sitMinutes = ref(40)
@@ -58,16 +86,29 @@ const snoozeMinutes = ref(10)
 const loading = ref(false)
 const activitySeconds = ref(0)
 const stretchIndex = ref(0)
+const copy = ref<ReminderCopyPayload>({ ...DEFAULT_COPY })
+const idleProgress = ref<ReminderIdleProgress>({ ...DEFAULT_IDLE })
 
 const stretchEmojis = ['🧘', '💪', '🙆', '🚶', '🤸']
 
 let unsubscribeMinutes: (() => void) | null = null
 let unsubscribePhase: (() => void) | null = null
+let unsubscribeCopy: (() => void) | null = null
+let unsubscribeIdle: (() => void) | null = null
+let idlePollTimer: ReturnType<typeof setInterval> | null = null
 let activityTimer: ReturnType<typeof setInterval> | null = null
 let activityStartAt = 0
 
 const currentStretch = computed(() => STRETCH_TIPS[stretchIndex.value % STRETCH_TIPS.length])
 const stretchEmoji = computed(() => stretchEmojis[stretchIndex.value % stretchEmojis.length])
+
+function applyCopy(next: ReminderCopyPayload): void {
+  copy.value = next
+}
+
+function applyIdleProgress(next: ReminderIdleProgress): void {
+  idleProgress.value = next
+}
 
 function shuffleStretch(): void {
   stretchIndex.value = (stretchIndex.value + 1) % STRETCH_TIPS.length
@@ -99,10 +140,21 @@ function switchPhase(next: Phase): void {
   }
 }
 
-onMounted(async () => {
+async function loadReminderContext(): Promise<void> {
   sitMinutes.value = await window.standUp.getReminderMinutes()
   const settings = await window.standUp.getSettings()
   snoozeMinutes.value = settings.snoozeMinutes
+
+  const fetchedCopy = await window.standUp.getReminderCopy()
+  if (fetchedCopy) {
+    applyCopy(fetchedCopy)
+  }
+
+  applyIdleProgress(await window.standUp.getReminderIdleProgress())
+}
+
+onMounted(async () => {
+  await loadReminderContext()
 
   unsubscribeMinutes = window.standUp.onReminderMinutes((minutes) => {
     sitMinutes.value = minutes
@@ -111,26 +163,34 @@ onMounted(async () => {
   unsubscribePhase = window.standUp.onReminderPhase((p) => {
     switchPhase(p)
   })
+
+  unsubscribeCopy = window.standUp.onReminderCopy((next) => {
+    applyCopy(next)
+  })
+
+  unsubscribeIdle = window.standUp.onReminderIdleProgress((next) => {
+    applyIdleProgress(next)
+  })
+
+  idlePollTimer = setInterval(async () => {
+    if (phase.value !== 'alert') {
+      return
+    }
+    applyIdleProgress(await window.standUp.getReminderIdleProgress())
+  }, 1000)
 })
 
 onUnmounted(() => {
   unsubscribeMinutes?.()
   unsubscribePhase?.()
+  unsubscribeCopy?.()
+  unsubscribeIdle?.()
+  if (idlePollTimer) {
+    clearInterval(idlePollTimer)
+    idlePollTimer = null
+  }
   stopActivityTimer()
 })
-
-async function handleConfirm(): Promise<void> {
-  if (loading.value) return
-  loading.value = true
-  try {
-    const ok = await window.standUp.confirmReminder()
-    if (ok) {
-      switchPhase('standing')
-    }
-  } finally {
-    loading.value = false
-  }
-}
 
 async function handleSnooze(): Promise<void> {
   if (loading.value) return
@@ -217,6 +277,60 @@ async function handleSitDown(): Promise<void> {
   }
 }
 
+.reminder__unlock {
+  margin: 0 auto 32px;
+  max-width: 420px;
+  padding: 20px 24px;
+  border-radius: var(--radius-md);
+  background: rgba(15, 23, 42, 0.55);
+  border: 1px solid rgba(248, 113, 113, 0.25);
+}
+
+.reminder__unlock-label {
+  margin: 0 0 8px;
+  font-size: 16px;
+  font-weight: 600;
+  color: #fecaca;
+}
+
+.reminder__unlock-count {
+  margin: 0 0 12px;
+  font-size: 15px;
+  color: #e2e8f0;
+}
+
+.reminder__unlock-num {
+  font-size: 28px;
+  font-weight: 700;
+  color: #4ade80;
+  font-variant-numeric: tabular-nums;
+}
+
+.reminder__unlock-bar {
+  height: 8px;
+  border-radius: 999px;
+  background: rgba(148, 163, 184, 0.2);
+  overflow: hidden;
+}
+
+.reminder__unlock-fill {
+  height: 100%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, #f87171, #ef4444);
+  transition: width 0.35s ease;
+
+  &--done {
+    background: linear-gradient(90deg, #4ade80, #22c55e);
+  }
+}
+
+.reminder__unlock-meta {
+  margin: 10px 0 0;
+  font-size: 14px;
+  color: #94a3b8;
+  font-variant-numeric: tabular-nums;
+}
+
 .reminder__countdown {
   margin: 0 0 40px;
   font-size: 20px;
@@ -253,12 +367,6 @@ async function handleSitDown(): Promise<void> {
     opacity: 0.6;
     cursor: wait;
   }
-}
-
-.reminder__btn--primary {
-  background: #ef4444;
-  color: #fff;
-  box-shadow: 0 12px 40px rgba(239, 68, 68, 0.35);
 }
 
 .reminder__btn--secondary {

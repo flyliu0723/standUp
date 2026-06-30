@@ -8,6 +8,11 @@ import { sitTimer, standTimer } from './timerService'
 import { workScheduleService } from './workScheduleService'
 import { closeReminderWindow, getReminderWindow } from '../windows/reminderWindow'
 import { closeReminderToastWindow, showIdeDeferWindow } from '../windows/reminderToastWindow'
+import {
+  closeSitDownPromptWindow,
+  isSitDownPromptOpen,
+  showSitDownPromptWindow
+} from '../windows/sitDownPromptWindow'
 import { showStandCompleteToast } from './notificationService'
 import { shouldOfferIdeDefer, getIdeGuardContext } from './ideGuardService'
 import {
@@ -24,6 +29,8 @@ import { activityMonitorService } from './activityMonitorService'
 import { aiAnalysisService } from './aiAnalysisService'
 import {
   PersistedRuntime,
+  ReminderCopyPayload,
+  ReminderIdleProgress,
   SessionEndReason,
   SessionStatus,
   SessionType,
@@ -33,6 +40,11 @@ import {
   AppSettings
 } from '../types/session'
 import { getStandReasonConfig, STAND_REASON_LABELS } from '../constants/standReasons'
+import { pickReminderCopy } from '../constants/reminderCopy'
+import {
+  broadcastReminderCopy,
+  broadcastReminderIdleProgress
+} from '../utils/reminderBroadcast'
 
 interface RuntimeStoreSchema {
   runtime: PersistedRuntime
@@ -81,6 +93,8 @@ export class SessionService {
   private pauseReason: StandReasonId | null = null
   private currentPauseId: string | null = null
   private pausePlannedMs = 0
+  private currentReminderCopy: ReminderCopyPayload | null = null
+  private sitDownPromptCooldownUntil = 0
 
   init(): void {
     sitTimer.setOnExpire(() => this.handleSitTimerExpire())
@@ -165,20 +179,16 @@ export class SessionService {
     if (!this.reminderActive || this.toastHandled) {
       return
     }
+    if (action === 'stand') {
+      return
+    }
     this.toastHandled = true
     this.clearToastGraceTimer()
     clearReminderEscalation()
 
-    if (action === 'stand') {
-      const ok = this.acknowledgeStand()
-      if (ok) {
-        showReminderStandingPhase(this.getReminderSitMinutes())
-      }
-    } else {
-      const ok = this.snoozeFromReminder()
-      if (ok) {
-        closeReminderWindow()
-      }
+    const ok = this.snoozeFromReminder()
+    if (ok) {
+      closeReminderWindow()
     }
     this.emitState()
   }
@@ -209,6 +219,24 @@ export class SessionService {
   onReminderClosed(): void {
     this.reminderActive = false
     this.stopReminderWatch()
+  }
+
+  dismissSitDownPrompt(): void {
+    closeSitDownPromptWindow()
+    this.sitDownPromptCooldownUntil = Date.now() + 2 * 60_000
+    this.persist()
+    this.emitState()
+  }
+
+  confirmSitDownFromPrompt(): boolean {
+    closeSitDownPromptWindow()
+    if (this.state !== 'standing') {
+      return false
+    }
+    this.autoStandPending = false
+    this.standingOnReminder = false
+    this.sitDown()
+    return true
   }
 
   toggleSitStand(): void {
@@ -347,6 +375,7 @@ export class SessionService {
     statsService.startSession(this.currentSessionId, 'sitting', this.segmentStartAt)
     standTimer.stop()
     sitTimer.start(true)
+    closeSitDownPromptWindow()
     this.persist()
     this.emitState()
     this.dismissReminderIfOpen()
@@ -383,6 +412,8 @@ export class SessionService {
       return false
     }
     this.reminderActive = false
+    this.ideDeferPending = false
+    this.endReminderUnlockTracking()
     this.stopReminderWatch()
     this.clearToastGraceTimer()
     clearReminderEscalation()
@@ -417,6 +448,7 @@ export class SessionService {
     this.completeReminderResponse('delayed')
     this.ideDeferPending = false
     this.reminderActive = false
+    this.endReminderUnlockTracking()
     this.stopReminderWatch()
     this.clearToastGraceTimer()
     clearReminderEscalation()
@@ -435,7 +467,45 @@ export class SessionService {
   }
 
   confirmReminderManually(): void {
-    this.acknowledgeStand()
+    // 手动确认已禁用，起身须通过键鼠空闲自动判定
+  }
+
+  getReminderIdleProgress(): ReminderIdleProgress {
+    const requiredSeconds = settingsService.getSettings().standUnlockIdleSeconds
+    const idleMs = this.getReminderUnlockIdleMs()
+    const idleSeconds = Math.floor(idleMs / 1000)
+    const requiredMs = requiredSeconds * 1000
+    const progress = requiredMs > 0 ? Math.min(1, idleMs / requiredMs) : 0
+    const remainingSeconds = Math.max(0, Math.ceil((requiredMs - idleMs) / 1000))
+    return {
+      idleSeconds,
+      requiredSeconds,
+      remainingSeconds,
+      progress,
+      unlocked: idleMs >= requiredMs
+    }
+  }
+
+  private getReminderUnlockIdleMs(): number {
+    const settings = settingsService.getSettings()
+    if (settings.enableActivityMonitor && activityMonitorService.isReminderUnlockTracking()) {
+      return activityMonitorService.getReminderUnlockIdleMs()
+    }
+    return idleService.getIdleMs()
+  }
+
+  private beginReminderUnlockTracking(): void {
+    if (settingsService.getSettings().enableActivityMonitor) {
+      activityMonitorService.beginReminderUnlockTracking()
+    }
+  }
+
+  private endReminderUnlockTracking(): void {
+    activityMonitorService.endReminderUnlockTracking()
+  }
+
+  getReminderCopy(): ReminderCopyPayload | null {
+    return this.currentReminderCopy
   }
 
   snoozeReminder(): void {
@@ -513,6 +583,7 @@ export class SessionService {
     sitTimer.stop()
     standTimer.startWithDuration(this.currentStandDurationMs)
     activityMonitorService.resetContinuousActive()
+    closeSitDownPromptWindow()
     this.persist()
     this.emitState()
   }
@@ -707,14 +778,14 @@ export class SessionService {
     )
 
     if (this.state === 'sitting' && !this.reminderActive) {
-      if (idleMs >= awayThresholdMs) {
+      if (settings.enableAutoStandOnIdle && idleMs >= awayThresholdMs) {
         this.exitInactivePause()
-        this.enterAway()
+        this.autoBeginStandingFromIdle()
       } else if (idleMs >= inactivePauseMs && !this.inactivePauseActive) {
         this.enterInactivePause()
       }
     }
-    this.checkAutoStandOnReminder()
+    this.onReminderWatchTick()
   }
 
   private handleActive(): void {
@@ -722,12 +793,47 @@ export class SessionService {
       this.exitInactivePause()
     }
     if (this.state === 'away') {
-      void this.handleAwayReturn()
+      this.resolveAwayAsBreak()
       return
     }
-    if (this.state === 'standing' && this.autoStandPending && this.standingOnReminder) {
-      this.sitDownFromReminder()
+  }
+
+  private autoBeginStandingFromIdle(): void {
+    if (this.state !== 'sitting' || this.reminderActive) {
+      return
     }
+    this.flushActiveSegment()
+    if (this.currentSessionId) {
+      this.endCurrentSession('idle')
+    }
+    this.autoStandPending = false
+    this.standingOnReminder = false
+    this.awayEnteredAt = 0
+    this.awaySitEndAt = 0
+    this.beginStanding('auto_idle')
+  }
+
+  private checkStandingSitDownPrompt(): void {
+    const settings = settingsService.getSettings()
+    if (!settings.enableSitDownPrompt || this.state !== 'standing') {
+      return
+    }
+    if (this.standingOnReminder && getReminderWindow()) {
+      return
+    }
+    if (isSitDownPromptOpen() || Date.now() < this.sitDownPromptCooldownUntil) {
+      return
+    }
+    const idleMs = idleService.getIdleMs()
+    if (idleMs >= 10_000) {
+      return
+    }
+    const windowMs = settings.standSitDownDetectSeconds * 1000
+    const mouseCount = activityMonitorService.getMouseEventCount(windowMs)
+    if (mouseCount < settings.standSitDownMouseEvents) {
+      return
+    }
+    showSitDownPromptWindow()
   }
 
   private handleSitTimerExpire(): void {
@@ -758,9 +864,13 @@ export class SessionService {
     this.reminderActive = true
     this.ideDeferPending = true
     this.markReminderTriggered()
+    this.beginReminderUnlockTracking()
     const ctx = getIdeGuardContext()
     const snoozeMinutes = settingsService.getSettings().snoozeMinutes
-    showIdeDeferWindow(ctx?.label ?? 'IDE', snoozeMinutes)
+    showIdeDeferWindow(ctx?.label ?? 'IDE', snoozeMinutes, () => {
+      broadcastReminderIdleProgress(this.getReminderIdleProgress())
+    })
+    this.startReminderWatch()
     this.emitState()
   }
 
@@ -769,7 +879,16 @@ export class SessionService {
     this.toastHandled = false
     this.ideDeferPending = false
     this.markReminderTriggered()
+    this.beginReminderUnlockTracking()
     const minutes = this.getReminderSitMinutes()
+
+    const todayStats = statsService.getTodayStats()
+    this.currentReminderCopy = pickReminderCopy({
+      sitMinutes: minutes,
+      snoozeCountToday: todayStats.snoozeCount || 0,
+      hour: new Date().getHours()
+    })
+    broadcastReminderCopy(this.currentReminderCopy)
 
     this.reminderListeners.forEach((fn) => fn(minutes))
     this.startReminderWatch()
@@ -778,17 +897,20 @@ export class SessionService {
       onOverlayShown: () => {},
       onFullscreenShown: () => {
         this.onReminderShown()
+        broadcastReminderCopy(this.currentReminderCopy!)
+        broadcastReminderIdleProgress(this.getReminderIdleProgress())
       }
     })
     this.emitState()
   }
 
-  private checkAutoStandOnReminder(): void {
+  private onReminderWatchTick(): void {
     if (!this.reminderActive) {
       return
     }
-    const autoMs = settingsService.getSettings().autoStandIdleMinutes * 60 * 1000
-    if (idleService.getIdleMs() >= autoMs) {
+    const progress = this.getReminderIdleProgress()
+    broadcastReminderIdleProgress(progress)
+    if (progress.unlocked) {
       if (this.acknowledgeStand(true)) {
         showReminderStandingPhase(this.getReminderSitMinutes())
       }
@@ -797,9 +919,10 @@ export class SessionService {
 
   private startReminderWatch(): void {
     this.stopReminderWatch()
+    this.onReminderWatchTick()
     this.reminderWatchTimer = setInterval(() => {
-      this.checkAutoStandOnReminder()
-    }, 5000)
+      this.onReminderWatchTick()
+    }, 1000)
   }
 
   private stopReminderWatch(): void {
@@ -878,6 +1001,8 @@ export class SessionService {
     }
     this.reminderActive = false
     this.ideDeferPending = false
+    this.currentReminderCopy = null
+    this.endReminderUnlockTracking()
     this.stopReminderWatch()
     this.clearToastGraceTimer()
     dismissEscalationWindows()
@@ -973,19 +1098,31 @@ export class SessionService {
     if (this.state !== 'away') {
       return
     }
+    const now = Date.now()
     if (!this.awaySitEndAt && this.awayEnteredAt) {
       const thresholdMs = settingsService.getSettings().idleThresholdMinutes * 60_000
       this.awaySitEndAt = Math.max(this.activeSessionStartAt, this.awayEnteredAt - thresholdMs)
     }
     if (this.currentSessionId) {
-      const sitEndAt = this.awaySitEndAt || Date.now()
+      const sitEndAt = this.awaySitEndAt || now
       statsService.endSession(this.currentSessionId, 'idle', sitEndAt)
       this.currentSessionId = null
       this.currentSessionType = null
       this.sessionAccumulatedMs = 0
       this.segmentStartAt = 0
-      this.persist()
     }
+    this.state = 'standing'
+    this.currentSessionType = 'standing'
+    this.currentSessionId = randomUUID()
+    this.sessionAccumulatedMs = 0
+    this.segmentStartAt = now
+    this.activeSessionStartAt = now
+    statsService.startSession(this.currentSessionId, 'standing', now)
+    sitTimer.stop()
+    standTimer.start(true)
+    this.awayEnteredAt = 0
+    this.awaySitEndAt = 0
+    this.persist()
   }
 
   private restoreTimers(runtime: PersistedRuntime): void {
@@ -1041,6 +1178,9 @@ export class SessionService {
   }
 
   checkTimers(): void {
+    if (this.state === 'standing') {
+      this.checkStandingSitDownPrompt()
+    }
     if (this.state !== 'sitting' && this.state !== 'standing') {
       return
     }

@@ -101,6 +101,11 @@ export interface AppSettings {
   launchAtLogin: boolean
   snoozeMinutes: number
   autoStandIdleMinutes: number
+  standUnlockIdleSeconds: number
+  standSitDownDetectSeconds: number
+  standSitDownMouseEvents: number
+  enableAutoStandOnIdle: boolean
+  enableSitDownPrompt: boolean
   dailyBreakGoal: number
   toastGraceSeconds: number
   overlayGraceSeconds: number
@@ -128,6 +133,20 @@ export interface AppSettings {
   aiTriggerOnWorkEnd: boolean
   aiIncludeAppNames: boolean
   appCategoryOverrides: Record<string, AppCategory>
+}
+
+export interface ReminderCopyPayload {
+  title: string
+  subtitle: string
+  tag: string
+}
+
+export interface ReminderIdleProgress {
+  idleSeconds: number
+  requiredSeconds: number
+  remainingSeconds: number
+  progress: number
+  unlocked: boolean
 }
 
 export interface RangeDayStat {
@@ -399,6 +418,11 @@ export const DEFAULT_SETTINGS: AppSettings = {
   launchAtLogin: false,
   snoozeMinutes: 10,
   autoStandIdleMinutes: 2,
+  standUnlockIdleSeconds: 30,
+  standSitDownDetectSeconds: 60,
+  standSitDownMouseEvents: 5,
+  enableAutoStandOnIdle: true,
+  enableSitDownPrompt: true,
   dailyBreakGoal: 8,
   toastGraceSeconds: 8,
   overlayGraceSeconds: 30,

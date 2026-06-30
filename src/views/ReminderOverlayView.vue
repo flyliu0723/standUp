@@ -6,12 +6,12 @@
     <div class="overlay__edge overlay__edge--left" />
 
     <div class="overlay__banner">
-      <p class="overlay__title">该起立了</p>
-      <p class="overlay__sub">已连续工作 {{ sitMinutes }} 分钟</p>
+      <p class="overlay__title">{{ copy.title }}</p>
+      <p class="overlay__sub">{{ copy.subtitle }}</p>
+      <p class="overlay__idle">
+        保持不操作 {{ idleProgress.remainingSeconds }} 秒后自动判定起身
+      </p>
       <div class="overlay__actions">
-        <button class="overlay__btn overlay__btn--primary" :disabled="loading" @click="handleStand">
-          立即起立
-        </button>
         <button class="overlay__btn overlay__btn--ghost" :disabled="loading" @click="handleSnooze">
           延后 {{ snoozeMinutes }} 分钟
         </button>
@@ -22,36 +22,61 @@
 
 <script setup lang="ts">
 import { onMounted, onUnmounted, ref } from 'vue'
+import type { ReminderCopyPayload, ReminderIdleProgress } from '@/types/session'
+
+const DEFAULT_COPY: ReminderCopyPayload = {
+  tag: 'standUp',
+  title: '该起立了',
+  subtitle: '离开座位即可解除提醒'
+}
+
+const DEFAULT_IDLE: ReminderIdleProgress = {
+  idleSeconds: 0,
+  requiredSeconds: 30,
+  remainingSeconds: 30,
+  progress: 0,
+  unlocked: false
+}
 
 const sitMinutes = ref(40)
 const snoozeMinutes = ref(10)
 const loading = ref(false)
+const copy = ref<ReminderCopyPayload>({ ...DEFAULT_COPY })
+const idleProgress = ref<ReminderIdleProgress>({ ...DEFAULT_IDLE })
 
 let unsubscribeMinutes: (() => void) | null = null
+let unsubscribeCopy: (() => void) | null = null
+let unsubscribeIdle: (() => void) | null = null
 
 onMounted(async () => {
   sitMinutes.value = await window.standUp.getReminderMinutes()
   const settings = await window.standUp.getSettings()
   snoozeMinutes.value = settings.snoozeMinutes
 
+  const fetchedCopy = await window.standUp.getReminderCopy()
+  if (fetchedCopy) {
+    copy.value = fetchedCopy
+  }
+  idleProgress.value = await window.standUp.getReminderIdleProgress()
+
   unsubscribeMinutes = window.standUp.onReminderMinutes((minutes) => {
     sitMinutes.value = minutes
+  })
+
+  unsubscribeCopy = window.standUp.onReminderCopy((next) => {
+    copy.value = next
+  })
+
+  unsubscribeIdle = window.standUp.onReminderIdleProgress((next) => {
+    idleProgress.value = next
   })
 })
 
 onUnmounted(() => {
   unsubscribeMinutes?.()
+  unsubscribeCopy?.()
+  unsubscribeIdle?.()
 })
-
-async function handleStand(): Promise<void> {
-  if (loading.value) return
-  loading.value = true
-  try {
-    await window.standUp.confirmReminder()
-  } finally {
-    loading.value = false
-  }
-}
 
 async function handleSnooze(): Promise<void> {
   if (loading.value) return
@@ -146,9 +171,16 @@ async function handleSnooze(): Promise<void> {
 }
 
 .overlay__sub {
-  margin: 0 0 12px;
+  margin: 0 0 8px;
   font-size: 13px;
   color: #94a3b8;
+}
+
+.overlay__idle {
+  margin: 0 0 12px;
+  font-size: 12px;
+  color: #cbd5e1;
+  font-variant-numeric: tabular-nums;
 }
 
 .overlay__actions {
@@ -169,11 +201,6 @@ async function handleSnooze(): Promise<void> {
     opacity: 0.6;
     cursor: wait;
   }
-}
-
-.overlay__btn--primary {
-  background: #ef4444;
-  color: #fff;
 }
 
 .overlay__btn--ghost {

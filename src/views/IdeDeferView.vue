@@ -6,6 +6,15 @@
         <span class="ide-defer__title">检测到 {{ ideLabel }} 编码中</span>
       </div>
       <p class="ide-defer__body">正在输入，要打断你吗？</p>
+      <div class="ide-defer__countdown">
+        <span class="ide-defer__countdown-num">{{ idleProgress.remainingSeconds }}</span>
+        <span class="ide-defer__countdown-text">
+          秒后自动判定为已起身（离开座位、保持不操作即可）
+        </span>
+      </div>
+      <div class="ide-defer__bar">
+        <div class="ide-defer__bar-fill" :style="{ width: `${Math.round(idleProgress.progress * 100)}%` }" />
+      </div>
       <div class="ide-defer__actions">
         <button class="ide-defer__btn ide-defer__btn--primary" :disabled="loading" @click="handleDefer">
           延后 {{ snoozeMinutes }} 分钟
@@ -20,22 +29,48 @@
 
 <script setup lang="ts">
 import { onMounted, onUnmounted, ref } from 'vue'
+import type { ReminderIdleProgress } from '@/types/session'
+
+const DEFAULT_IDLE: ReminderIdleProgress = {
+  idleSeconds: 0,
+  requiredSeconds: 30,
+  remainingSeconds: 30,
+  progress: 0,
+  unlocked: false
+}
 
 const ideLabel = ref('IDE')
 const snoozeMinutes = ref(10)
 const loading = ref(false)
+const idleProgress = ref<ReminderIdleProgress>({ ...DEFAULT_IDLE })
 
 let unsubscribe: (() => void) | null = null
+let unsubscribeIdle: (() => void) | null = null
+let idlePollTimer: ReturnType<typeof setInterval> | null = null
 
-onMounted(() => {
+onMounted(async () => {
   unsubscribe = window.standUp.onIdeDeferContext((ctx) => {
     ideLabel.value = ctx.ideLabel
     snoozeMinutes.value = ctx.snoozeMinutes
   })
+
+  idleProgress.value = await window.standUp.getReminderIdleProgress()
+  unsubscribeIdle = window.standUp.onReminderIdleProgress((next) => {
+    idleProgress.value = next
+  })
+
+  idlePollTimer = setInterval(async () => {
+    idleProgress.value = await window.standUp.getReminderIdleProgress()
+  }, 1000)
 })
 
 onUnmounted(() => {
   unsubscribe?.()
+  unsubscribeIdle?.()
+  if (idlePollTimer) {
+    clearInterval(idlePollTimer)
+    idlePollTimer = null
+  }
 })
 
 async function handleDefer(): Promise<void> {
@@ -110,9 +145,44 @@ async function handleRemind(): Promise<void> {
 }
 
 .ide-defer__body {
-  margin: 0 0 14px;
+  margin: 0 0 10px;
   font-size: 13px;
   color: #94a3b8;
+}
+
+.ide-defer__countdown {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.ide-defer__countdown-num {
+  font-size: 22px;
+  font-weight: 700;
+  color: #60a5fa;
+  font-variant-numeric: tabular-nums;
+}
+
+.ide-defer__countdown-text {
+  font-size: 11px;
+  color: #94a3b8;
+  line-height: 1.3;
+}
+
+.ide-defer__bar {
+  height: 6px;
+  border-radius: 999px;
+  background: rgba(148, 163, 184, 0.2);
+  overflow: hidden;
+  margin-bottom: 14px;
+}
+
+.ide-defer__bar-fill {
+  height: 100%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, #60a5fa, #3b82f6);
+  transition: width 0.35s ease;
 }
 
 .ide-defer__actions {

@@ -6,6 +6,7 @@ import IdeDeferView from '@/views/IdeDeferView.vue'
 import StatusBarView from '@/views/StatusBarView.vue'
 import DesktopPetView from '@/views/DesktopPetView.vue'
 import MicroActionToastView from '@/views/MicroActionToastView.vue'
+import SitDownPromptView from '@/views/SitDownPromptView.vue'
 import MainView from '@/views/MainView.vue'
 
 const router = createRouter({
@@ -20,6 +21,7 @@ const router = createRouter({
     { path: '/status-bar', name: 'status-bar', component: StatusBarView },
     { path: '/desktop-pet', name: 'desktop-pet', component: DesktopPetView },
     { path: '/micro-action', name: 'micro-action', component: MicroActionToastView },
+    { path: '/sit-down-prompt', name: 'sit-down-prompt', component: SitDownPromptView },
     { path: '/report', redirect: { path: '/main', query: { tab: 'report' } } },
     { path: '/settings', redirect: { path: '/main', query: { tab: 'settings' } } }
   ]

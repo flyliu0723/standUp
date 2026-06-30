@@ -3,13 +3,13 @@
     <div class="toast__card">
       <div class="toast__header">
         <span class="toast__emoji">👋</span>
-        <span class="toast__title">该起来活动了</span>
+        <span class="toast__title">{{ copy.tag }}</span>
       </div>
-      <p class="toast__body">已连续工作 {{ sitMinutes }} 分钟</p>
+      <p class="toast__body">{{ copy.title }}</p>
+      <p class="toast__hint">
+        保持不操作 {{ idleProgress.remainingSeconds }} 秒后自动判定起身
+      </p>
       <div class="toast__actions">
-        <button class="toast__btn toast__btn--primary" :disabled="loading" @click="handleStand">
-          {{ loading ? '…' : '起立' }}
-        </button>
         <button class="toast__btn toast__btn--ghost" :disabled="loading" @click="handleSnooze">
           延后 {{ snoozeMinutes }} 分钟
         </button>
@@ -20,36 +20,70 @@
 
 <script setup lang="ts">
 import { onMounted, onUnmounted, ref } from 'vue'
+import type { ReminderCopyPayload, ReminderIdleProgress } from '@/types/session'
+
+const DEFAULT_COPY: ReminderCopyPayload = {
+  tag: 'standUp',
+  title: '该起来活动了',
+  subtitle: ''
+}
+
+const DEFAULT_IDLE: ReminderIdleProgress = {
+  idleSeconds: 0,
+  requiredSeconds: 30,
+  remainingSeconds: 30,
+  progress: 0,
+  unlocked: false
+}
 
 const sitMinutes = ref(40)
 const snoozeMinutes = ref(10)
 const loading = ref(false)
+const copy = ref<ReminderCopyPayload>({ ...DEFAULT_COPY })
+const idleProgress = ref<ReminderIdleProgress>({ ...DEFAULT_IDLE })
 
 let unsubscribeMinutes: (() => void) | null = null
+let unsubscribeCopy: (() => void) | null = null
+let unsubscribeIdle: (() => void) | null = null
+let idlePollTimer: ReturnType<typeof setInterval> | null = null
 
 onMounted(async () => {
   sitMinutes.value = await window.standUp.getReminderMinutes()
   const settings = await window.standUp.getSettings()
   snoozeMinutes.value = settings.snoozeMinutes
 
+  const fetchedCopy = await window.standUp.getReminderCopy()
+  if (fetchedCopy) {
+    copy.value = fetchedCopy
+  }
+  idleProgress.value = await window.standUp.getReminderIdleProgress()
+
   unsubscribeMinutes = window.standUp.onReminderMinutes((minutes) => {
     sitMinutes.value = minutes
   })
+
+  unsubscribeCopy = window.standUp.onReminderCopy((next) => {
+    copy.value = next
+  })
+
+  unsubscribeIdle = window.standUp.onReminderIdleProgress((next) => {
+    idleProgress.value = next
+  })
+
+  idlePollTimer = setInterval(async () => {
+    idleProgress.value = await window.standUp.getReminderIdleProgress()
+  }, 1000)
 })
 
 onUnmounted(() => {
   unsubscribeMinutes?.()
-})
-
-async function handleStand(): Promise<void> {
-  if (loading.value) return
-  loading.value = true
-  try {
-    await window.standUp.confirmReminder()
-  } finally {
-    loading.value = false
+  unsubscribeCopy?.()
+  unsubscribeIdle?.()
+  if (idlePollTimer) {
+    clearInterval(idlePollTimer)
+    idlePollTimer = null
   }
-}
+})
 
 async function handleSnooze(): Promise<void> {
   if (loading.value) return
@@ -115,9 +149,17 @@ async function handleSnooze(): Promise<void> {
 }
 
 .toast__body {
-  margin: 0 0 14px;
+  margin: 0 0 8px;
   font-size: 13px;
+  color: #e2e8f0;
+  line-height: 1.45;
+}
+
+.toast__hint {
+  margin: 0 0 14px;
+  font-size: 12px;
   color: #94a3b8;
+  font-variant-numeric: tabular-nums;
 }
 
 .toast__actions {
@@ -143,11 +185,6 @@ async function handleSnooze(): Promise<void> {
     opacity: 0.6;
     cursor: wait;
   }
-}
-
-.toast__btn--primary {
-  background: #22c55e;
-  color: #fff;
 }
 
 .toast__btn--ghost {

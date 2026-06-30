@@ -12,6 +12,8 @@ const LASTINPUTINFO = koffi.struct('LASTINPUTINFO', {
 const GetLastInputInfo = user32.func('bool GetLastInputInfo(_Out_ LASTINPUTINFO *plii)')
 const GetTickCount = kernel32.func('uint32 GetTickCount()')
 
+const LASTINPUTINFO_SIZE = 8
+
 export class IdleService {
   private intervalId: ReturnType<typeof setInterval> | null = null
   private onIdle: (() => void) | null = null
@@ -37,17 +39,31 @@ export class IdleService {
   }
 
   getIdleMs(): number {
-    const info = { cbSize: 8, dwTime: 0 }
-    const ok = GetLastInputInfo(info)
-    if (!ok) {
+    if (process.platform !== 'win32') {
       return 0
     }
-    const currentTick = GetTickCount()
-    let idleMs = currentTick - info.dwTime
-    if (idleMs < 0) {
-      idleMs += 0x100000000
+    try {
+      const ptr = koffi.alloc(LASTINPUTINFO, 1)
+      koffi.encode(ptr, LASTINPUTINFO, { cbSize: LASTINPUTINFO_SIZE, dwTime: 0 })
+      const ok = GetLastInputInfo(ptr)
+      if (!ok) {
+        koffi.free(ptr)
+        return 0
+      }
+      const info = koffi.decode(ptr, LASTINPUTINFO) as { cbSize: number; dwTime: number }
+      koffi.free(ptr)
+      if (!info.dwTime) {
+        return 0
+      }
+      const currentTick = GetTickCount()
+      let idleMs = currentTick - info.dwTime
+      if (idleMs < 0) {
+        idleMs += 0x100000000
+      }
+      return idleMs
+    } catch {
+      return 0
     }
-    return idleMs
   }
 
   isIdle(): boolean {

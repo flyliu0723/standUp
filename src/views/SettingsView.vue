@@ -118,19 +118,41 @@
       <div class="settings__field">
         <label>无输入暂停计时（分钟）</label>
         <n-input-number v-model:value="form.inactivePauseMinutes" :min="1" :max="30" />
-        <p class="settings__hint">无键鼠输入超过该时间，暂停久坐倒计时（仍计入坐时）；超过空闲检测阈值则进入离座状态</p>
+        <p class="settings__hint">无键鼠输入超过该时间，暂停久坐倒计时（仍计入坐时）</p>
+      </div>
+
+      <div class="settings__field settings__field--row">
+        <label>久坐不动自动起立</label>
+        <n-switch v-model:value="form.enableAutoStandOnIdle" />
       </div>
 
       <div class="settings__field">
-        <label>空闲检测阈值（分钟）</label>
+        <label>自动起立空闲阈值（分钟）</label>
         <n-input-number v-model:value="form.idleThresholdMinutes" :min="1" :max="60" />
-        <p class="settings__hint">超过该时间无键鼠操作，自动暂停久坐计时</p>
+        <p class="settings__hint">坐姿模式下，键鼠空闲超过该时间自动切换为起立模式（不再弹离座确认窗）</p>
+      </div>
+
+      <div class="settings__field settings__field--row">
+        <label>起立后活动询问坐下</label>
+        <n-switch v-model:value="form.enableSitDownPrompt" />
       </div>
 
       <div class="settings__field">
-        <label>自动起立判定（分钟）</label>
-        <n-input-number v-model:value="form.autoStandIdleMinutes" :min="1" :max="10" />
-        <p class="settings__hint">提醒弹出后，键鼠空闲超过该时间视为已起立；回来后自动坐下</p>
+        <label>坐下检测窗口（秒）</label>
+        <n-input-number v-model:value="form.standSitDownDetectSeconds" :min="30" :max="180" />
+        <p class="settings__hint">起立模式下，在该时间窗口内统计鼠标活动次数</p>
+      </div>
+
+      <div class="settings__field">
+        <label>坐下检测鼠标次数</label>
+        <n-input-number v-model:value="form.standSitDownMouseEvents" :min="2" :max="30" />
+        <p class="settings__hint">窗口内鼠标活动达到该次数，右下角轻提示询问是否已坐下</p>
+      </div>
+
+      <div class="settings__field">
+        <label>起身解锁判定（秒）</label>
+        <n-input-number v-model:value="form.standUnlockIdleSeconds" :min="10" :max="120" />
+        <p class="settings__hint">提醒弹出后，键鼠空闲达到该秒数即判定为已起身并解除；回来后敲键盘自动坐下</p>
       </div>
 
       <div class="settings__field">
@@ -321,6 +343,11 @@ const form = reactive<AppSettings>({
   launchAtLogin: false,
   snoozeMinutes: 10,
   autoStandIdleMinutes: 2,
+  standUnlockIdleSeconds: 30,
+  standSitDownDetectSeconds: 60,
+  standSitDownMouseEvents: 5,
+  enableAutoStandOnIdle: true,
+  enableSitDownPrompt: true,
   dailyBreakGoal: 8,
   toastGraceSeconds: 8,
   overlayGraceSeconds: 30,

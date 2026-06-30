@@ -161,6 +161,9 @@ export class ActivityMonitorService {
   private mouseHookCount = 0
   private hooksInstalled = false
   private usageTrackingEnabled = false
+  /** 提醒解锁专用：仅在本应用键鼠 hook 检测到输入时重置 */
+  private reminderUnlockLastInputAt = 0
+  private lastUserInputAt = Date.now()
 
   pauseUsageTracking(): void {
     if (!this.usageTrackingEnabled) {
@@ -216,6 +219,42 @@ export class ActivityMonitorService {
     this.aggregateTimer = null
     appUsageService.flushCurrentSegment()
     this.uninstallInputHooks()
+  }
+
+  getMouseEventCount(withinMs: number): number {
+    const since = Date.now() - withinMs
+    return countEventsSince(this.inputEvents, since, 'mouse')
+  }
+
+  beginReminderUnlockTracking(): void {
+    this.reminderUnlockLastInputAt = Date.now()
+  }
+
+  endReminderUnlockTracking(): void {
+    this.reminderUnlockLastInputAt = 0
+  }
+
+  isReminderUnlockTracking(): boolean {
+    return this.reminderUnlockLastInputAt > 0
+  }
+
+  getReminderUnlockIdleMs(): number {
+    if (this.reminderUnlockLastInputAt <= 0) {
+      return idleService.getIdleMs()
+    }
+    return Math.max(0, Date.now() - this.reminderUnlockLastInputAt)
+  }
+
+  private markUserInput(): void {
+    const now = Date.now()
+    this.lastUserInputAt = now
+    if (this.reminderUnlockLastInputAt > 0) {
+      this.reminderUnlockLastInputAt = now
+    }
+  }
+
+  getTimeSinceLastUserInputMs(): number {
+    return Math.max(0, Date.now() - this.lastUserInputAt)
   }
 
   getSnapshot(): ActivitySnapshot {
@@ -434,6 +473,7 @@ export class ActivityMonitorService {
     }
     this.lastInputTick = currentTick
     const now = Date.now()
+    this.markUserInput()
     const pos = readCursorPos()
     let type: InputEvent['type'] = 'keyboard'
     if (pos && this.lastCursor) {
@@ -525,6 +565,7 @@ export class ActivityMonitorService {
           const now = Date.now()
           this.inputEvents.push({ at: now, type: 'keyboard' })
           this.keyboardHookCount++
+          this.markUserInput()
           this.updateContinuousActive(true)
         }
         return CallNextHookEx(keyboardHook, nCode, wParam, lParam)
@@ -535,6 +576,7 @@ export class ActivityMonitorService {
           const now = Date.now()
           this.inputEvents.push({ at: now, type: 'mouse' })
           this.mouseHookCount++
+          this.markUserInput()
           this.updateContinuousActive(true)
         } else if (nCode >= HC_ACTION && wParam === WM_MOUSEMOVE) {
           const now = Date.now()
@@ -542,6 +584,7 @@ export class ActivityMonitorService {
             lastMouseMoveAt = now
             this.inputEvents.push({ at: now, type: 'mouse' })
             this.mouseHookCount++
+            this.markUserInput()
             this.updateContinuousActive(true)
           }
         }

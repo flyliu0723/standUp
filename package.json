@@ -1,6 +1,6 @@
 {
   "name": "standup",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "久坐提醒 — 每40分钟强制起立",
   "main": "./out/main/index.js",
   "author": "standUp",

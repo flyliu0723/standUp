@@ -16,8 +16,7 @@ import { listStatusBarPlacementOptions } from '../utils/statusBarPlacement'
 import { applyAmbientSettingsChange } from '../services/ambientDisplayService'
 import { closeReminderWindow } from '../windows/reminderWindow'
 import {
-  clearReminderEscalation,
-  showReminderStandingPhase
+  clearReminderEscalation
 } from '../services/reminderEscalation'
 import { refreshTrayMenu } from '../tray'
 import { showMainWindow, minimizeMainWindow, hideMainWindow } from '../windows/mainWindow'
@@ -25,14 +24,8 @@ import { AppSettings } from '../types/session'
 
 export function registerIpcHandlers(): void {
   ipcMain.handle('reminder:confirm', () => {
-    clearReminderEscalation()
-    const minutes = sessionService.getReminderSitMinutes()
-    const ok = sessionService.acknowledgeStand()
-    if (ok) {
-      showReminderStandingPhase(minutes)
-    }
     refreshTrayMenu()
-    return ok
+    return false
   })
 
   ipcMain.handle('reminder:sitDown', () => {
@@ -66,6 +59,26 @@ export function registerIpcHandlers(): void {
 
   ipcMain.handle('reminder:getMinutes', () => {
     return sessionService.getReminderSitMinutes()
+  })
+
+  ipcMain.handle('reminder:getIdleProgress', () => {
+    return sessionService.getReminderIdleProgress()
+  })
+
+  ipcMain.handle('reminder:getCopy', () => {
+    return sessionService.getReminderCopy()
+  })
+
+  ipcMain.handle('sit-down-prompt:confirm', () => {
+    const ok = sessionService.confirmSitDownFromPrompt()
+    refreshTrayMenu()
+    return ok
+  })
+
+  ipcMain.handle('sit-down-prompt:dismiss', () => {
+    sessionService.dismissSitDownPrompt()
+    refreshTrayMenu()
+    return true
   })
 
   ipcMain.handle('stats:today', () => {

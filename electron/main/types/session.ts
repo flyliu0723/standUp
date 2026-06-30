@@ -102,6 +102,14 @@ export interface AppSettings {
   launchAtLogin: boolean
   snoozeMinutes: number
   autoStandIdleMinutes: number
+  /** 提醒激活期间，键鼠空闲达到该秒数即判定为已起身并解除提醒 */
+  standUnlockIdleSeconds: number
+  /** 起立模式下，检测键鼠活动的窗口（秒） */
+  standSitDownDetectSeconds: number
+  /** 起立模式下，窗口内鼠标活动次数达到该值则询问是否坐下 */
+  standSitDownMouseEvents: number
+  enableAutoStandOnIdle: boolean
+  enableSitDownPrompt: boolean
   dailyBreakGoal: number
   toastGraceSeconds: number
   overlayGraceSeconds: number
@@ -378,6 +386,20 @@ export interface PersistedRuntime {
   timerDeadlineAt?: number
 }
 
+export interface ReminderCopyPayload {
+  title: string
+  subtitle: string
+  tag: string
+}
+
+export interface ReminderIdleProgress {
+  idleSeconds: number
+  requiredSeconds: number
+  remainingSeconds: number
+  progress: number
+  unlocked: boolean
+}
+
 export interface SessionStatus {
   state: WorkState
   currentSitMs: number
@@ -402,6 +424,11 @@ export const DEFAULT_SETTINGS: AppSettings = {
   launchAtLogin: false,
   snoozeMinutes: 10,
   autoStandIdleMinutes: 2,
+  standUnlockIdleSeconds: 30,
+  standSitDownDetectSeconds: 60,
+  standSitDownMouseEvents: 5,
+  enableAutoStandOnIdle: true,
+  enableSitDownPrompt: true,
   dailyBreakGoal: 8,
   toastGraceSeconds: 8,
   overlayGraceSeconds: 30,

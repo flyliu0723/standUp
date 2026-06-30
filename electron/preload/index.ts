@@ -10,6 +10,8 @@ import type {
   DailyStats,
   GamificationState,
   ReportSummary,
+  ReminderCopyPayload,
+  ReminderIdleProgress,
   SessionStatus,
   StatusBarPlacementOption,
   StatusBarLayoutInfo,
@@ -24,8 +26,12 @@ export interface StandUpApi {
   sitDownFromReminder: () => Promise<boolean>
   snoozeReminder: () => Promise<boolean>
   getReminderMinutes: () => Promise<number>
+  getReminderIdleProgress: () => Promise<ReminderIdleProgress>
+  getReminderCopy: () => Promise<ReminderCopyPayload | null>
   onReminderMinutes: (callback: (minutes: number) => void) => () => void
   onReminderPhase: (callback: (phase: ReminderPhase) => void) => () => void
+  onReminderCopy: (callback: (copy: ReminderCopyPayload) => void) => () => void
+  onReminderIdleProgress: (callback: (progress: ReminderIdleProgress) => void) => () => void
   getTodayStats: () => Promise<DailyStats>
   getStatsByDate: (date: string) => Promise<DailyStats>
   getHistory: () => Promise<string[]>
@@ -57,6 +63,8 @@ export interface StandUpApi {
   getStatusBarPlacements: () => Promise<StatusBarPlacementOption[]>
   onStatusBarLayout: (callback: (layout: StatusBarLayoutInfo) => void) => () => void
   dismissMicroAction: () => Promise<boolean>
+  confirmSitDownPrompt: () => Promise<boolean>
+  dismissSitDownPrompt: () => Promise<boolean>
   onMicroActionContext: (
     callback: (ctx: { id: string; emoji: string; title: string; body: string }) => void
   ) => () => void
@@ -74,6 +82,8 @@ const api: StandUpApi = {
   sitDownFromReminder: () => ipcRenderer.invoke('reminder:sitDown'),
   snoozeReminder: () => ipcRenderer.invoke('reminder:snooze'),
   getReminderMinutes: () => ipcRenderer.invoke('reminder:getMinutes'),
+  getReminderIdleProgress: () => ipcRenderer.invoke('reminder:getIdleProgress'),
+  getReminderCopy: () => ipcRenderer.invoke('reminder:getCopy'),
   onReminderMinutes: (callback) => {
     const handler = (_event: Electron.IpcRendererEvent, minutes: number) => callback(minutes)
     ipcRenderer.on('reminder:minutes', handler)
@@ -83,6 +93,17 @@ const api: StandUpApi = {
     const handler = (_event: Electron.IpcRendererEvent, phase: ReminderPhase) => callback(phase)
     ipcRenderer.on('reminder:phase', handler)
     return () => ipcRenderer.removeListener('reminder:phase', handler)
+  },
+  onReminderCopy: (callback) => {
+    const handler = (_event: Electron.IpcRendererEvent, copy: ReminderCopyPayload) => callback(copy)
+    ipcRenderer.on('reminder:copy', handler)
+    return () => ipcRenderer.removeListener('reminder:copy', handler)
+  },
+  onReminderIdleProgress: (callback) => {
+    const handler = (_event: Electron.IpcRendererEvent, progress: ReminderIdleProgress) =>
+      callback(progress)
+    ipcRenderer.on('reminder:idleProgress', handler)
+    return () => ipcRenderer.removeListener('reminder:idleProgress', handler)
   },
   getTodayStats: () => ipcRenderer.invoke('stats:today'),
   getStatsByDate: (date) => ipcRenderer.invoke('stats:byDate', date),
@@ -136,6 +157,8 @@ const api: StandUpApi = {
     return () => ipcRenderer.removeListener('status-bar:layout', handler)
   },
   dismissMicroAction: () => ipcRenderer.invoke('micro-action:dismiss'),
+  confirmSitDownPrompt: () => ipcRenderer.invoke('sit-down-prompt:confirm'),
+  dismissSitDownPrompt: () => ipcRenderer.invoke('sit-down-prompt:dismiss'),
   onMicroActionContext: (callback) => {
     const handler = (
       _event: Electron.IpcRendererEvent,
